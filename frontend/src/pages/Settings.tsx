@@ -25,10 +25,11 @@ import { api, errorMessage } from "@/lib/api";
 import { useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, PRIORITIES } from "@/lib/format";
-import { useHealth, useLogs, useMySessions, useSettings } from "@/lib/queries";
+import { useHealth, useLogs, useMySessions, useSettings, useUpdateStatus } from "@/lib/queries";
 import { useTheme } from "@/lib/theme";
 import type { AppSettings, Me, SessionInfo, SettingsPayload, ThemeChoice } from "@/lib/types";
 
+import { UpdatesTab } from "./Updates";
 import { SessionTable } from "./Users";
 
 const TABS = [
@@ -39,6 +40,7 @@ const TABS = [
   { id: "network", label: "Network", admin: true },
   { id: "security", label: "Security", admin: true },
   { id: "quotas", label: "Default quotas", admin: true },
+  { id: "updates", label: "Updates", admin: true },
   { id: "diagnostics", label: "Diagnostics", admin: true },
   { id: "logs", label: "Logs", admin: true },
 ] as const;
@@ -768,11 +770,12 @@ export function SettingsPage() {
   const tab = (params.tab ?? "account") as TabId;
   const settings = useSettings(isAdmin);
   const tabs = TABS.filter((item) => isAdmin || !item.admin);
+  const updateAvailable = useUpdateStatus(isAdmin).data?.update_available ?? false;
 
   if (!tabs.some((item) => item.id === tab)) return <Navigate to="/settings" replace />;
   const payload = settings.data;
   const restart = payload?.restart_required ?? [];
-  const needsSettings = !["account", "diagnostics", "logs"].includes(tab);
+  const needsSettings = !["account", "updates", "diagnostics", "logs"].includes(tab);
 
   return (
     <>
@@ -798,6 +801,9 @@ export function SettingsPage() {
                 }
               >
                 {item.label}
+                {item.id === "updates" && updateAvailable && (
+                  <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" aria-label="Update available" />
+                )}
               </NavLink>
             ))}
           </nav>
@@ -811,6 +817,7 @@ export function SettingsPage() {
             </>
           )}
           {tab === "diagnostics" && <DiagnosticsTab />}
+          {tab === "updates" && <UpdatesTab />}
           {tab === "logs" && <LogsTab />}
           {needsSettings &&
             (settings.isPending ? (

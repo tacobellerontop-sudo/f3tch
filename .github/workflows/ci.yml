@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install packages
+        run: python -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: Run tests
+        working-directory: backend
+        run: python -m pytest tests -q
+
+  frontend:
+    name: Frontend tests and package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install packages
+        working-directory: frontend
+        run: npm ci
+      - name: Type check
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Run tests
+        working-directory: frontend
+        run: npm test
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+      - name: Build the release package
+        run: python3 scripts/package_release.py --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fetch-package
+          path: dist/FETCH-*
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Install, run and update on Windows
+    needs: frontend
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: fetch-package
+          path: package
+      - name: Verify the checksum and unpack
+        run: |
+          $zip = Get-ChildItem package -Filter 'FETCH-*.zip' | Select-Object -First 1
+          $expected = ((Get-Content "$($zip.FullName).sha256" -Raw) -split '\s+')[0]
+          $actual = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Checksum mismatch: $expected / $actual" }
+          Expand-Archive -Path $zip.FullName -DestinationPath C:\fetch-test
+      - name: Install (no Node.js build, no aria2)
+        working-directory: C:\fetch-test\FETCH
+        run: |
+          .\install.ps1 -Yes -SkipAria2
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 exited with $LASTEXITCODE" }
+      - name: Start and check
+        working-directory: C:\fetch-test\FETCH
+        run: |
+          .\start.ps1 -NoBrowser
+          if ($LASTEXITCODE -ne 0) { throw "start.ps1 exited with $LASTEXITCODE" }
+          $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8787/api/health' -UseBasicParsing
+          if ($health.status -ne 'ok') { throw 'The health check failed.' }
+          $page = Invoke-WebRequest -Uri 'http://127.0.0.1:8787/' -UseBasicParsing
+          if ($page.Content -notmatch '<div id="root"') { throw 'The dashboard was not served.' }
+          Write-Host "FETCH $($health.version) is running."
+      - name: Update in place while running
+        working-directory: C:\fetch-test\FETCH
+        run: |
+          .\update.ps1 -SkipPull -Yes
+          if ($LASTEXITCODE -ne 0) { throw "update.ps1 exited with $LASTEXITCODE" }
+          $status = Get-Content data\update-status.json -Raw | ConvertFrom-Json
+          if ($status.state -ne 'succeeded') { throw "Update state is $($status.state): $($status.message)" }
+          $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8787/api/health' -UseBasicParsing
+          if ($health.status -ne 'ok') { throw 'FETCH did not come back after the update.' }
+      - name: Stop
+        working-directory: C:\fetch-test\FETCH
+        run: |
+          .\stop.ps1
+          if ($LASTEXITCODE -ne 0) { throw "stop.ps1 exited with $LASTEXITCODE" }
+          $up = $true
+          try { Invoke-RestMethod -Uri 'http://127.0.0.1:8787/api/health' -UseBasicParsing -TimeoutSec 5 | Out-Null } catch { $up = $false }
+          if ($up) { throw 'FETCH is still answering after stop.ps1.' }
+      - name: Uninstall
+        working-directory: C:\fetch-test\FETCH
+        run: |
+          .\uninstall.ps1 -Yes
+          if ($LASTEXITCODE -ne 0) { throw "uninstall.ps1 exited with $LASTEXITCODE" }
+      - name: Show logs on failure
+        if: failure()
+        working-directory: C:\fetch-test\FETCH
+        run: |
+          Get-ChildItem logs -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "---- $($_.Name)"
+            Get-Content $_.FullName -Tail 80
+          }

@@ -41,7 +41,7 @@ host computer, where each person can browse and retrieve their own.
 |---|---|
 | Operating system | Windows 10 or 11 (PowerShell 5.1 or newer) |
 | Python | 3.12 or newer |
-| Node.js | 20 or newer (only to build the web interface during install and update) |
+| Node.js | Not needed for a release package. 20 or newer only when installing from a git checkout, to build the web interface |
 | aria2 | Optional. Speeds up large downloads with several connections |
 | Disk | About 500 MB for the program, plus room for your downloads |
 
@@ -53,7 +53,9 @@ only does so after you say yes. You can also install them yourself:
 
 ## Install
 
-1. Put the FETCH folder where it should live, for example `C:\FETCH`.
+1. Download `FETCH-<version>.zip` from the
+   [latest release](https://github.com/tacobellerontop-sudo/f3tch/releases/latest)
+   and unpack it. Put the `FETCH` folder where it should live, for example `C:\FETCH`.
    Downloads are stored inside it by default (you can move them later).
 2. Open PowerShell in that folder and run:
 
@@ -213,15 +215,41 @@ there, and start FETCH again.
 
 ## Updating
 
+**From the dashboard.** An administrator opens **Settings > Updates**. The page
+shows the installed version, whether a newer release exists on GitHub, and its
+release notes. **Install update** asks for confirmation, then stops FETCH,
+installs the release and starts it again; the page reconnects by itself. A dot
+on the Settings entry in the sidebar tells administrators when an update is
+waiting. Nothing is ever installed without that click, and the automatic check
+can be switched off on the same page.
+
+**From PowerShell.** The dashboard runs the same script you can run yourself:
+
 ```powershell
 .\update.ps1
 ```
 
-This stops FETCH, backs up the database and configuration to
-`data\backups\<timestamp>\`, pulls the newest code when the folder is a git
-checkout (after asking), updates packages, rebuilds the interface, migrates
-the database and starts FETCH again if it was running. If you update by
-copying files instead, run `.\update.ps1 -SkipPull`.
+Either way the update:
+
+1. stops FETCH (running downloads are saved and continue afterwards),
+2. backs up the database and configuration to `data\backups\<timestamp>\`,
+3. downloads `FETCH-<version>.zip` from the project's GitHub releases and
+   checks it against the SHA-256 checksum published with the release (a
+   package that does not match is refused and nothing is changed),
+4. replaces the program files only (`data`, `logs`, `storage`, `config\fetch.toml`
+   and `.venv` are never touched),
+5. updates the Python packages, migrates the database and starts FETCH again
+   if it was running.
+
+A git checkout is updated with `git pull --ff-only` instead of a release
+package (use `-FromRelease` to force the package). If you update by copying
+files yourself, run `.\update.ps1 -SkipPull`. The result of the last run is
+shown in **Settings > Updates** and details are in `logs\update.log`.
+
+Installing from the dashboard needs Windows and a server started with
+`start.ps1`. The update check is an anonymous request to GitHub for the latest
+release of the repository named under `[updates]` in `config\fetch.toml`; it
+sends nothing about your server.
 
 ## Backup and restore
 

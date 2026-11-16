@@ -503,6 +503,35 @@ async def cleanup(request: Request, admin: AdminUser, ctx: Ctx, db: Db) -> dict:
     return result
 
 
+# -- updates ---------------------------------------------------------------------
+
+
+@router.get("/admin/update")
+async def update_status(admin: AdminUser, ctx: Ctx, db: Db, refresh: bool = False) -> dict:
+    db.commit()
+    return await ctx.updates.status(
+        auto_check=ctx.settings.get().general.check_for_updates,
+        refresh=refresh, managed=ctx.server is not None,
+    )
+
+
+@router.post("/admin/update/apply")
+async def apply_update(request: Request, admin: AdminUser, ctx: Ctx, db: Db) -> dict:
+    """Start update.ps1, which stops FETCH, installs the update and restarts it."""
+    from ..updates import UpdateError
+
+    db.commit()
+    try:
+        await asyncio.to_thread(ctx.updates.start, managed=ctx.server is not None)
+    except UpdateError as exc:
+        raise ApiError(409, "update_unavailable", str(exc)) from exc
+    ctx.activity.record(
+        "admin", "update.started", "Update started from the dashboard",
+        user_id=admin.id, ip=client_ip(request, ctx),
+    )
+    return {"ok": True}
+
+
 # -- local control (used by stop.ps1 / `python -m fetch_app stop`) --------------
 
 

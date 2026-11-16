@@ -35,9 +35,16 @@ function Write-Warn([string]$Message) {
     Write-Host "    [!] $Message" -ForegroundColor Yellow
 }
 
+# A script can set this to a script block that runs before a fatal exit
+# (update.ps1 uses it to record the failure for the dashboard).
+$script:OnFatal = $null
+
 function Stop-WithError([string]$Message) {
     Write-Host ''
     Write-Host "ERROR: $Message" -ForegroundColor Red
+    if ($script:OnFatal) {
+        try { & $script:OnFatal $Message } catch { }
+    }
     exit 1
 }
 
@@ -214,6 +221,11 @@ function Stop-FetchServer {
         return $true
     }
     return $false
+}
+
+function Test-PrebuiltFrontend {
+    # Release packages ship a ready-made web interface, so Node.js is not needed.
+    return (Test-Path (Join-Path $script:FrontendDir 'dist\.prebuilt')) -and (Test-Path (Join-Path $script:FrontendDir 'dist\index.html'))
 }
 
 function Build-Frontend {

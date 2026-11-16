@@ -28,6 +28,8 @@ secrets. It is never overwritten. An annotated example is in
 | `security.setup_token` | `FETCH_SETUP_TOKEN` | generated | Needed once to create the first administrator in the browser |
 | `security.ssrf_allowlist` | `FETCH_SSRF_ALLOWLIST` (comma separated) | `[]` | Private hosts or CIDR ranges downloads may reach |
 | `security.cookie_secure` | `FETCH_COOKIE_SECURE` | `auto` | `auto`, `true` or `false` |
+| `updates.repository` | `FETCH_UPDATE_REPO` | `tacobellerontop-sudo/f3tch` | GitHub repository (`owner/name`) whose releases are offered as updates. Empty disables update checks |
+| `updates.api_url` | `FETCH_UPDATE_API` | `https://api.github.com` | GitHub API address used for the check |
 
 Other variables: `FETCH_HOME` (the install folder; defaults to the folder that
 contains `backend/`) and `FETCH_CONFIG` (path of the configuration file).
@@ -60,6 +62,7 @@ Zero means "no limit" for every limit below unless noted.
 | Default theme | Dark | Dark, light or follow the device. Each person can override it |
 | Language | English | Only English is included |
 | Default destination | Private | Where new downloads go unless chosen otherwise |
+| Check for updates automatically | On | Ask GitHub for the latest release a few times a day (Settings > Updates). Updates are only installed when an administrator confirms |
 
 ### Downloads
 

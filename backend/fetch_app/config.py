@@ -20,6 +20,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 DEFAULT_PORT = 8787
+DEFAULT_UPDATE_REPOSITORY = "tacobellerontop-sudo/f3tch"
 
 
 def default_home() -> Path:
@@ -47,6 +48,13 @@ class BootConfig:
     # "auto" marks cookies Secure when the request arrived over HTTPS.
     cookie_secure: str = "auto"
     log_level: str = "INFO"
+    # GitHub repository ("owner/name") whose releases are offered as updates.
+    update_repository: str = DEFAULT_UPDATE_REPOSITORY
+    update_api_url: str = "https://api.github.com"
+
+    @property
+    def update_status_file(self) -> Path:
+        return self.data_dir / "update-status.json"
 
     @property
     def database_path(self) -> Path:
@@ -89,6 +97,7 @@ def load_config(home: Path | None = None, config_file: Path | None = None) -> Bo
     paths = raw.get("paths", {})
     server = raw.get("server", {})
     security = raw.get("security", {})
+    updates = raw.get("updates", {})
 
     def pick(env_name: str, section: dict, key: str, default):
         if env.get(env_name) not in (None, ""):
@@ -115,6 +124,12 @@ def load_config(home: Path | None = None, config_file: Path | None = None) -> Bo
         ssrf_allowlist=list(allow),
         cookie_secure=str(pick("FETCH_COOKIE_SECURE", security, "cookie_secure", "auto")).lower(),
         log_level=str(pick("FETCH_LOG_LEVEL", server, "log_level", "INFO")).upper(),
+        update_repository=str(
+            pick("FETCH_UPDATE_REPO", updates, "repository", DEFAULT_UPDATE_REPOSITORY)
+        ).strip(),
+        update_api_url=str(
+            pick("FETCH_UPDATE_API", updates, "api_url", "https://api.github.com")
+        ).rstrip("/"),
     )
 
 
@@ -166,6 +181,11 @@ setup_token = {_toml_str(config.setup_token)}
 # ["192.168.1.20", "10.0.0.0/24"]. Leave empty unless you know you need it.
 ssrf_allowlist = []
 cookie_secure = "auto"
+
+[updates]
+# GitHub repository whose releases are offered under Settings > Updates.
+# Set to "" to switch update checks off completely.
+repository = {_toml_str(config.update_repository)}
 """
     config.config_file.write_text(body, encoding="utf-8")
     try:

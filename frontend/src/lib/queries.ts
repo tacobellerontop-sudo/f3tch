@@ -22,6 +22,7 @@ import type {
   SettingsPayload,
   StorageUsage,
   SubmitResult,
+  UpdateStatus,
 } from "./types";
 
 export interface DownloadListParams {
@@ -195,5 +196,16 @@ export function useLogs(params: { level: string; q: string; limit: number }) {
     queryKey: ["settings", "logs", params],
     queryFn: () => api.get<{ items: LogEntry[]; file: string }>("/admin/logs", params),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Update status for administrators. The server caches the GitHub answer. */
+export function useUpdateStatus(enabled = true) {
+  return useQuery({
+    queryKey: ["settings", "update"],
+    queryFn: () => api.get<UpdateStatus>("/admin/update"),
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }

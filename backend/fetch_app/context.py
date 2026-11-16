@@ -20,6 +20,7 @@ from .security.ratelimit import LoginRateLimiter
 from .security.urlguard import UrlGuard
 from .settings_service import SettingsService
 from .storage import StorageManager
+from .updates import UpdateService
 
 
 @dataclass
@@ -37,6 +38,7 @@ class AppContext:
     proxy: GuardProxy
     aria2: Aria2Service
     manager: DownloadManager
+    updates: UpdateService
     login_limiter: LoginRateLimiter = field(default_factory=LoginRateLimiter)
     started_at: float = field(default_factory=time.time)
     control_token: str = ""

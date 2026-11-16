@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { RealtimeProvider } from "@/lib/realtime";
 import { ThemeProvider } from "@/lib/theme";
+import { useUpdating } from "@/lib/updating";
 import { ActivityPage } from "@/pages/Activity";
 import { InvitePage, LoginPage, SetupPage } from "@/pages/Auth";
 import { DownloadsPage } from "@/pages/Downloads";
@@ -17,6 +18,7 @@ import { OverviewPage } from "@/pages/Overview";
 import { ProvidersPage } from "@/pages/Providers";
 import { QueuePage } from "@/pages/Queue";
 import { SettingsPage } from "@/pages/Settings";
+import { UpdatingScreen } from "@/pages/Updates";
 import { UsersPage } from "@/pages/Users";
 
 export function createQueryClient(): QueryClient {
@@ -43,11 +45,14 @@ function RequireAdmin({ children }: { children: ReactNode }) {
 function Routing() {
   const { bootstrap, me, loading, unreachable, sessionEnded, refresh } = useAuth();
   const location = useLocation();
+  const updating = useUpdating();
 
   useEffect(() => {
     document.title = bootstrap?.app_name ?? "FETCH";
   }, [bootstrap?.app_name]);
 
+  // An update was started from this tab: wait for the server to come back.
+  if (updating) return <UpdatingScreen state={updating} />;
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center">

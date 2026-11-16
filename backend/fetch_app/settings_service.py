@@ -34,6 +34,8 @@ class GeneralSettings(_Section):
     theme: Literal["dark", "light", "system"] = "dark"
     language: Literal["en"] = "en"
     default_destination: Literal["private", "shared"] = "private"
+    # Look for a newer release on GitHub now and then (one anonymous request).
+    check_for_updates: bool = True
 
 
 class DownloadSettings(_Section):

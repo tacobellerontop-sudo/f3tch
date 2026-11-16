@@ -279,6 +279,7 @@ export interface AppSettings {
     theme: ThemeChoice;
     language: string;
     default_destination: "private" | "shared";
+    check_for_updates: boolean;
   };
   downloads: {
     max_global_concurrent: number;
@@ -362,6 +363,35 @@ export interface Health {
   realtime_clients: number;
   guard_proxy_denied: number;
   restart_required: string[];
+}
+
+export interface UpdateRun {
+  state: "running" | "succeeded" | "failed" | "cancelled" | string;
+  message: string;
+  from_version: string;
+  to_version: string;
+  started_at: string;
+  finished_at: string;
+}
+
+export interface UpdateStatus {
+  current_version: string;
+  repository: string;
+  auto_check: boolean;
+  checked_at: string | null;
+  error: string;
+  latest_version: string | null;
+  update_available: boolean;
+  release_name: string;
+  notes: string;
+  published_at: string | null;
+  release_url: string;
+  package_available: boolean;
+  can_apply: boolean;
+  apply_blocker: string;
+  source: "git" | "release";
+  in_progress: boolean;
+  last_run: UpdateRun | null;
 }
 
 export interface LogEntry {

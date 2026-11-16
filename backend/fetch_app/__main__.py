@@ -97,6 +97,7 @@ def _status(boot: BootConfig, _args: argparse.Namespace) -> int:
         "version": __version__, "running": running, "bind_address": host, "port": port,
         "users": users, "setup_required": users == 0,
         "setup_token": boot.setup_token if users == 0 else None,
+        "update_repository": boot.update_repository,
     }))
     return 0
 

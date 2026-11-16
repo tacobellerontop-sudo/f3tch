@@ -3,7 +3,8 @@
     Installs FETCH in this folder.
 
 .DESCRIPTION
-    Checks the prerequisites (Python 3.12+, Node.js 20+, optionally aria2),
+    Checks the prerequisites (Python 3.12+, optionally aria2, and Node.js 20+
+    when the web interface has to be built from source),
     creates a Python virtual environment in .venv, installs the backend
     packages, builds the web interface, creates the configuration and the
     database, and prints how to open the dashboard.
@@ -32,6 +33,10 @@
 .PARAMETER SkipFrontendBuild
     Keep the existing frontend\dist build.
 
+.PARAMETER RebuildFrontend
+    Build the web interface even though this release package already
+    contains a built one (needs Node.js).
+
 .PARAMETER Yes
     Answer "yes" to every question (unattended install). This includes
     installing missing prerequisites with winget.
@@ -49,6 +54,7 @@ param(
     [switch]$RegisterStartup,
     [switch]$SkipAria2,
     [switch]$SkipFrontendBuild,
+    [switch]$RebuildFrontend,
     [switch]$Yes
 )
 
@@ -105,6 +111,10 @@ Write-Ok "Python $($python.Version) ($($python.Path))"
 # -- Node.js ----------------------------------------------------------------
 $distIndex = Join-Path $script:FrontendDir 'dist\index.html'
 $needBuild = -not $SkipFrontendBuild.IsPresent
+if ($needBuild -and (Test-PrebuiltFrontend) -and -not $RebuildFrontend.IsPresent) {
+    # This is a release package: the web interface is already built.
+    $needBuild = $false
+}
 if ($SkipFrontendBuild.IsPresent -and -not (Test-Path $distIndex)) {
     Write-Warn 'There is no existing frontend build, so it has to be built.'
     $needBuild = $true

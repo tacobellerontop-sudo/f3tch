@@ -20,6 +20,11 @@ bind_address = "127.0.0.1"
 port = 8787
 log_level = "INFO"
 
+[updates]
+# GitHub repository whose releases are offered in Settings > Updates and
+# installed by update.ps1. Set to "" to turn update checks off.
+repository = "tacobellerontop-sudo/f3tch"
+
 [security]
 # A Fernet key. Generate one with:
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

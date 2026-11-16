@@ -38,6 +38,7 @@ from .providers.registry import ProviderRegistry
 from .security.crypto import SecretBox
 from .security.urlguard import UrlGuard
 from .settings_service import SettingsService
+from .updates import UpdateService
 from .storage import StorageManager
 
 log = logging.getLogger("fetch.app")
@@ -82,7 +83,8 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
     return AppContext(
         boot=boot, db=db, settings=settings, bus=bus, activity=activity, storage=storage,
         guard=guard, http=http, box=box, registry=registry, proxy=proxy, aria2=aria2,
-        manager=manager, control_token=secrets.token_urlsafe(32),
+        manager=manager, updates=UpdateService(boot, http),
+        control_token=secrets.token_urlsafe(32),
     )
 
 

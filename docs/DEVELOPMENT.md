@@ -129,3 +129,26 @@ needs batch mode for most `ALTER` operations; `env.py` enables it.
   in the event bus audience rules; the frontend only hides what the server
   would refuse anyway.
 - No feature flags for unfinished work, and no controls that do nothing.
+
+## Continuous integration and releases
+
+`.github/workflows/ci.yml` runs on every pull request and on `main`: the
+backend tests, the frontend type check, tests and build, and a Windows job
+that installs the freshly built package with `install.ps1`, starts it, checks
+the dashboard, runs `update.ps1 -SkipPull`, and then stops and uninstalls it.
+
+To publish a release:
+
+1. Set the new version in `backend/fetch_app/__init__.py` and
+   `frontend/package.json`, and add a `## [x.y.z]` section to `CHANGELOG.md`.
+2. Push a tag `vx.y.z` on that commit.
+
+`.github/workflows/release.yml` then runs CI, builds `FETCH-x.y.z.zip` with
+`scripts/package_release.py` (tracked program files plus the built interface
+and a `frontend/dist/.prebuilt` marker), publishes it with its `.sha256` file
+and the changelog section as release notes, and finally installs the package
+on Windows and lets `update.ps1` download and verify the published release.
+
+Installed servers find the release through `GET /repos/<repo>/releases/latest`
+(`fetch_app/updates.py`), so a release marked as a draft or pre-release is not
+offered as an update.

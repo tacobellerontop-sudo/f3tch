@@ -20,6 +20,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AddDownloadDialog } from "@/components/downloads/AddDownloadDialog";
 import { Button, Menu, Notice, ProgressBar } from "@/components/ui";
 import { useAuth, useMe } from "@/lib/auth";
+import { useUpdateStatus } from "@/lib/queries";
 import { cn } from "@/lib/cn";
 import { formatBytes, initials } from "@/lib/format";
 import { useConnectionStatus, type ConnectionStatus } from "@/lib/realtime";
@@ -74,6 +75,7 @@ function SidebarContent({ compact, onNavigate, onToggle }: { compact: boolean; o
   const status = useConnectionStatus();
   const openAdd = useAddDownload();
   const isAdmin = me.user.role === "admin";
+  const updateAvailable = useUpdateStatus(isAdmin).data?.update_available ?? false;
   const { storage_bytes: used } = me.quota.usage;
   const limit = me.quota.limits.max_storage_bytes;
   const percent = limit > 0 ? Math.min(100, (used / limit) * 100) : null;
@@ -126,6 +128,13 @@ function SidebarContent({ compact, onNavigate, onToggle }: { compact: boolean; o
               <>
                 <item.icon className={cn("h-4 w-4 shrink-0", isActive ? "text-accent" : "text-subtle group-hover:text-muted")} />
                 {!compact && <span className="truncate">{item.label}</span>}
+                {item.to === "/settings" && updateAvailable && (
+                  <span
+                    className={cn("h-1.5 w-1.5 shrink-0 rounded-full bg-accent", compact ? "absolute ml-5 -mt-4" : "ml-auto")}
+                    title="A FETCH update is available"
+                    aria-label="Update available"
+                  />
+                )}
               </>
             )}
           </NavLink>

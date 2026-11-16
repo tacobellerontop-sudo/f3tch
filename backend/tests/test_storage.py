@@ -181,18 +181,47 @@ def test_large_file_is_streamed_not_buffered(admin, boot):
         fh.truncate(size)
     import tracemalloc
 
+    # Talk to the ASGI app directly: the test client's own transport may
+    # buffer a whole response, which would hide how the server sends it.
+    cookies = "; ".join(f"{name}={value}" for name, value in admin.client.cookies.items())
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http",
+        "path": "/api/files/download", "raw_path": b"/api/files/download", "root_path": "",
+        "query_string": b"path=huge.bin", "server": ("testserver", 80), "client": ("127.0.0.1", 50000),
+        "headers": [(b"host", b"testserver"), (b"cookie", cookies.encode())],
+    }
+    seen = {"status": 0, "length": 0, "received": 0, "largest": 0}
+
+    class Enough(Exception):
+        pass
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            seen["status"] = message["status"]
+            seen["length"] = int(dict(message["headers"])[b"content-length"])
+        elif message["type"] == "http.response.body":
+            body = message.get("body", b"")
+            seen["received"] += len(body)
+            seen["largest"] = max(seen["largest"], len(body))
+            if seen["received"] >= 256 * 1024 * 1024:
+                raise Enough  # like a client that disconnects
+
+    async def run():
+        try:
+            await admin.client.app(scope, receive, send)
+        except Enough:
+            pass
+
     tracemalloc.start()
-    received, largest = 0, 0
-    with admin.client.stream("GET", "/api/files/download", params={"path": "huge.bin"}) as response:
-        assert response.status_code == 200
-        assert int(response.headers["content-length"]) == size
-        for chunk in response.iter_raw():
-            received += len(chunk)
-            largest = max(largest, len(chunk))
-            if received >= 256 * 1024 * 1024:
-                break
+    admin.client.portal.call(run)
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
+    assert seen["status"] == 200
+    assert seen["length"] == size
+    received, largest = seen["received"], seen["largest"]
     assert received >= 256 * 1024 * 1024
     assert largest <= 4 * 1024 * 1024
     assert peak < 64 * 1024 * 1024, f"peak traced memory {peak} bytes"

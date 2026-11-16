@@ -1,12 +1,12 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import type { AppSettings, SettingsPayload } from "@/lib/types";
+import type { AppSettings, SettingsPayload, UpdateStatus } from "@/lib/types";
 
 import { type Call, HttpFailure, makeAdminUser, makeMe, makeProvider, renderApp, signedIn } from "./harness";
 
 const settings: AppSettings = {
-  general: { app_name: "FETCH", theme: "dark", language: "en", default_destination: "private" },
+  general: { app_name: "FETCH", theme: "dark", language: "en", default_destination: "private", check_for_updates: true },
   downloads: {
     max_global_concurrent: 3, max_per_user_concurrent: 2, retry_count: 3, retry_delay_seconds: 30, default_priority: 1,
     use_aria2: true, aria2_path: "", aria2_min_size_mb: 16, aria2_connections: 4,
@@ -219,5 +219,88 @@ describe("providers and settings", () => {
     await waitFor(() => expect(server.find("POST", "/auth/password")).toHaveLength(1));
     expect(server.find("POST", "/auth/password")[0].body).toEqual({ current_password: "old password here", new_password: "new password here" });
     expect(await screen.findByText(/2 other sessions were signed out/)).toBeInTheDocument();
+  });
+});
+
+const upToDate: UpdateStatus = {
+  current_version: "1.0.0", repository: "example/fetch", auto_check: true, checked_at: "2026-01-02T03:04:05Z", error: "",
+  latest_version: "1.0.0", update_available: false, release_name: "FETCH 1.0.0", notes: "", published_at: "2026-01-01T00:00:00Z",
+  release_url: "https://github.com/example/fetch/releases/tag/v1.0.0", package_available: true, can_apply: true, apply_blocker: "",
+  source: "release", in_progress: false, last_run: null,
+};
+const newer: UpdateStatus = {
+  ...upToDate, latest_version: "1.1.0", update_available: true, release_name: "FETCH 1.1.0", notes: "Faster queue handling.",
+  release_url: "https://github.com/example/fetch/releases/tag/v1.1.0",
+};
+
+describe("updates", () => {
+  it("shows the installed version and checks again on request", async () => {
+    let answer = upToDate;
+    const { user, server } = renderApp("/settings/updates", admin({ "GET /admin/update": () => answer }));
+    expect(await screen.findByRole("heading", { name: "FETCH 1.0.0" })).toBeInTheDocument();
+    expect(screen.getByText("Up to date")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install update" })).not.toBeInTheDocument();
+
+    answer = newer;
+    await user.click(screen.getByRole("button", { name: "Check now" }));
+    expect(await screen.findByText("Version 1.1.0 is available")).toBeInTheDocument();
+    expect(screen.getByText("Faster queue handling.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /View on GitHub/ })).toHaveAttribute("href", newer.release_url);
+    const refreshed = server.find("GET", "/admin/update").filter((call) => call.query.get("refresh") === "true");
+    expect(refreshed).toHaveLength(1);
+  });
+
+  it("installs an update only after confirmation, then waits for the server", async () => {
+    const { user, server } = renderApp("/settings/updates", admin({
+      "GET /admin/update": newer,
+      "POST /admin/update/apply": { ok: true },
+      "GET /health": { status: "ok", version: "1.0.0" },
+    }));
+    await user.click(await screen.findByRole("button", { name: "Install update" }));
+    expect(server.find("POST", "/admin/update/apply")).toHaveLength(0);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Install FETCH 1.1.0/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Install update" }));
+    expect(await screen.findByRole("heading", { name: "Updating FETCH" })).toBeInTheDocument();
+    expect(server.find("POST", "/admin/update/apply")).toHaveLength(1);
+    window.sessionStorage.clear();
+  });
+
+  it("explains why an update cannot be installed from the dashboard", async () => {
+    renderApp("/settings/updates", admin({
+      "GET /admin/update": { ...newer, can_apply: false, apply_blocker: "Updates can only be installed from the dashboard on Windows." },
+    }));
+    expect(await screen.findByText(/can only be installed from the dashboard on Windows/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Install update" })).toBeDisabled();
+  });
+
+  it("reports a failed check and a failed run without hiding the version", async () => {
+    renderApp("/settings/updates", admin({
+      "GET /admin/update": {
+        ...upToDate, latest_version: null, error: "GitHub could not be reached.",
+        last_run: { state: "failed", message: "Checksum mismatch.", from_version: "0.9.0", to_version: "1.0.0", started_at: "2026-01-01T00:00:00Z", finished_at: "2026-01-01T00:01:00Z" },
+      },
+    }));
+    expect(await screen.findByText("GitHub could not be reached.")).toBeInTheDocument();
+    expect(screen.getByText("The last update failed")).toBeInTheDocument();
+    expect(screen.getByText("Checksum mismatch.")).toBeInTheDocument();
+  });
+
+  it("turns automatic checks off through the settings API", async () => {
+    const { user, server } = renderApp("/settings/updates", admin({
+      "GET /admin/update": upToDate,
+      "PUT /settings": { ...payload, settings: { ...settings, general: { ...settings.general, check_for_updates: false } } },
+    }));
+    const toggle = await screen.findByRole("switch", { name: /Check for updates automatically/ });
+    await waitFor(() => expect(toggle).toBeChecked());
+    await user.click(toggle);
+    await waitFor(() => expect(server.find("PUT", "/settings")).toHaveLength(1));
+    expect(server.find("PUT", "/settings")[0].body).toEqual({ general: { check_for_updates: false } });
+  });
+
+  it("does not ask for update status on behalf of regular users", async () => {
+    const { server } = renderApp("/settings/updates", signedIn(makeMe("user"), { "GET /auth/sessions": [] }));
+    expect(await screen.findByText("Signed-in devices")).toBeInTheDocument();
+    expect(server.find("GET", "/admin/update")).toHaveLength(0);
   });
 });
