@@ -141,13 +141,16 @@ To publish a release:
 
 1. Set the new version in `backend/fetch_app/__init__.py` and
    `frontend/package.json`, and add a `## [x.y.z]` section to `CHANGELOG.md`.
-2. Push a tag `vx.y.z` on that commit.
+2. Merge that change into `main`.
 
-`.github/workflows/release.yml` then runs CI, builds `FETCH-x.y.z.zip` with
+`.github/workflows/release.yml` runs on every change to `main`. When the
+version has no release yet it runs CI, builds `FETCH-x.y.z.zip` with
 `scripts/package_release.py` (tracked program files plus the built interface
-and a `frontend/dist/.prebuilt` marker), publishes it with its `.sha256` file
-and the changelog section as release notes, and finally installs the package
-on Windows and lets `update.ps1` download and verify the published release.
+and a `frontend/dist/.prebuilt` marker), publishes it as release `vx.y.z` with
+its `.sha256` file and the changelog section as release notes, and finally
+installs the package on Windows and lets `update.ps1` download and verify the
+published release. Pushing a tag `vx.y.z` or starting the workflow by hand
+(Actions > Release > Run workflow) does the same.
 
 Installed servers find the release through `GET /repos/<repo>/releases/latest`
 (`fetch_app/updates.py`), so a release marked as a draft or pre-release is not

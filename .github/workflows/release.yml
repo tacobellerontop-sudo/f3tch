@@ -1,22 +1,62 @@
 name: Release
 
-# Pushing a tag like v1.2.3 tests the code, builds FETCH-1.2.3.zip and
-# publishes it as a GitHub release. The tag must match the version in
-# backend/fetch_app/__init__.py.
+# Publishes FETCH-<version>.zip as a GitHub release. The version comes from
+# backend/fetch_app/__init__.py and the release is tagged v<version>.
+#
+# It runs when main changes (and publishes only if that version has no release
+# yet), when a tag v<version> is pushed, or when started by hand.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    name: Decide whether to publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' backend/fetch_app/__init__.py)"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Could not read a version like 1.2.3 (got '$version')." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version." >&2
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release v$version already exists; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   ci:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
     uses: ./.github/workflows/ci.yml
 
   publish:
     name: Publish the release
-    needs: ci
+    needs: [plan, ci]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,20 +66,14 @@ jobs:
         with:
           name: fetch-package
           path: dist
-      - name: Check the tag against the version
-        id: version
+      - name: Check the package
         run: |
-          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' backend/fetch_app/__init__.py)"
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match version $version." >&2
-            exit 1
-          fi
+          version="${{ needs.plan.outputs.version }}"
           test -f "dist/FETCH-$version.zip"
           (cd dist && sha256sum -c "FETCH-$version.zip.sha256")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Release notes from the changelog
         run: |
-          awk -v v="${{ steps.version.outputs.version }}" '
+          awk -v v="${{ needs.plan.outputs.version }}" '
             /^## / { if (found) exit; if (index($0, "[" v "]")) { found = 1; next } }
             found { print }
           ' CHANGELOG.md > notes.md
@@ -48,10 +82,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${{ steps.version.outputs.version }}"
-          gh release create "$GITHUB_REF_NAME" \
+          version="${{ needs.plan.outputs.version }}"
+          gh release create "v$version" \
             "dist/FETCH-$version.zip" "dist/FETCH-$version.zip.sha256" \
-            --title "FETCH $version" --notes-file notes.md --verify-tag
+            --target "$GITHUB_SHA" --title "FETCH $version" --notes-file notes.md
 
   verify:
     name: Update from the published release on Windows
