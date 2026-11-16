@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# FETCH runtime
+/data/
+/logs/
+/storage/
+/config/fetch.toml
+/tools/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
