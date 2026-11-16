@@ -88,7 +88,7 @@ jobs:
         run: |
           .\install.ps1 -Yes -SkipAria2
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 exited with $LASTEXITCODE" }
-      - name: Start and check
+      - name: Start, check, update while running, stop
         working-directory: C:\fetch-test\FETCH
         run: |
           .\start.ps1 -NoBrowser
@@ -98,18 +98,15 @@ jobs:
           $page = Invoke-WebRequest -Uri 'http://127.0.0.1:8787/' -UseBasicParsing
           if ($page.Content -notmatch '<div id="root"') { throw 'The dashboard was not served.' }
           Write-Host "FETCH $($health.version) is running."
-      - name: Update in place while running
-        working-directory: C:\fetch-test\FETCH
-        run: |
+
+          # Same step on purpose: the runner ends background processes when a step finishes.
           .\update.ps1 -SkipPull -Yes
           if ($LASTEXITCODE -ne 0) { throw "update.ps1 exited with $LASTEXITCODE" }
           $status = Get-Content data\update-status.json -Raw | ConvertFrom-Json
           if ($status.state -ne 'succeeded') { throw "Update state is $($status.state): $($status.message)" }
           $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8787/api/health' -UseBasicParsing
           if ($health.status -ne 'ok') { throw 'FETCH did not come back after the update.' }
-      - name: Stop
-        working-directory: C:\fetch-test\FETCH
-        run: |
+
           .\stop.ps1
           if ($LASTEXITCODE -ne 0) { throw "stop.ps1 exited with $LASTEXITCODE" }
           $up = $true

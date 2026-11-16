@@ -68,7 +68,7 @@ jobs:
         with:
           name: fetch-package
           path: package
-      - name: Install the package
+      - name: Install the package, then update from the published release
         run: |
           $zip = Get-ChildItem package -Filter 'FETCH-*.zip' | Select-Object -First 1
           Expand-Archive -Path $zip.FullName -DestinationPath C:\fetch-test
@@ -77,9 +77,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 exited with $LASTEXITCODE" }
           .\start.ps1 -NoBrowser
           if ($LASTEXITCODE -ne 0) { throw "start.ps1 exited with $LASTEXITCODE" }
-      - name: Download, verify and reinstall the release with update.ps1
-        working-directory: C:\fetch-test\FETCH
-        run: |
+
+          # Download, verify and reinstall the published release.
           .\update.ps1 -Force -Unattended
           if ($LASTEXITCODE -ne 0) { throw "update.ps1 exited with $LASTEXITCODE" }
           $status = Get-Content data\update-status.json -Raw | ConvertFrom-Json
