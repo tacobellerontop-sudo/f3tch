@@ -334,9 +334,10 @@ if you no longer need them.
   login cannot be downloaded.
 - One server process, one SQLite database: built for a household or a group of
   friends, not for hundreds of concurrent users.
-- The PowerShell scripts were written for Windows PowerShell 5.1 and
-  PowerShell 7 and reviewed statically, but the development environment was
-  Linux, so they have not been executed on Windows yet.
+- The PowerShell scripts are run on Windows Server with Windows PowerShell 5.1
+  by the automated checks (install, start, update, stop, uninstall). The
+  winget prompts, the sign-in startup task and the **Install update** button
+  in the dashboard have not been exercised on a real desktop yet.
 - Changing the storage location does not move existing files for you.
 
 ## More documentation
