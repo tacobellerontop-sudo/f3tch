@@ -389,7 +389,7 @@ export interface UpdateStatus {
   package_available: boolean;
   can_apply: boolean;
   apply_blocker: string;
-  source: "git" | "release";
+  source: "git" | "release" | "exe";
   in_progress: boolean;
   last_run: UpdateRun | null;
 }

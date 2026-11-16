@@ -18,8 +18,9 @@ host computer, where each person can browse and retrieve their own.
 
 ## Contents
 
+- [Quick start: one file](#quick-start-one-file)
 - [Requirements](#requirements)
-- [Install](#install)
+- [Install (folder installation)](#install-folder-installation)
 - [Start and stop](#start-and-stop)
 - [First-time setup](#first-time-setup)
 - [Inviting friends](#inviting-friends)
@@ -35,7 +36,48 @@ host computer, where each person can browse and retrieve their own.
 - [Known limitations](#known-limitations)
 - [More documentation](#more-documentation)
 
+## Quick start: one file
+
+1. Download `FETCH.exe` from the
+   [latest release](https://github.com/tacobellerontop-sudo/f3tch/releases/latest).
+2. Put it in a folder of its own, for example `C:\FETCH`. FETCH keeps
+   everything next to the file: `config`, `data`, `logs` and `storage`.
+3. Double-click it. A window opens that says FETCH is running, and your
+   browser opens the dashboard with the first-time setup token filled in.
+   Choose the administrator's name and password and you are done.
+
+Nothing else has to be installed; Python and the web interface are inside the
+file. Keep the FETCH window open while you use FETCH: closing it (or pressing
+Ctrl+C in it) stops the server, and running downloads continue the next time
+you start it. Double-clicking `FETCH.exe` while it is already running just
+opens the dashboard.
+
+Windows may show "Windows protected your PC" the first time, because the
+file is not signed with a paid certificate. Choose **More info**, then **Run
+anyway**. To check the download, compare it with `FETCH.exe.sha256` from the
+same release: `Get-FileHash .\FETCH.exe`.
+
+Updates: **Settings > Updates > Install update** downloads the new
+`FETCH.exe`, verifies its checksum, backs up the database, replaces the file
+and restarts FETCH in a new window.
+
+Commands, from PowerShell in that folder: `.\FETCH.exe status`,
+`.\FETCH.exe stop`, `.\FETCH.exe run --no-browser`,
+`.\FETCH.exe create-admin`. To use another port or allow other devices
+before the first start, set it later in **Settings > Network**, or edit
+`config\fetch.toml`. For aria2, put `aria2c.exe` in `tools\aria2\` next
+to `FETCH.exe` or install it system-wide.
+
+The rest of this README describes the folder installation
+(`FETCH-<version>.zip` with PowerShell scripts), which adds a background
+service style start, a sign-in startup task and a scripted uninstall. The
+dashboard, providers, storage layout, backup and Tailscale sections apply to
+both.
+
 ## Requirements
+
+These are for the folder installation. `FETCH.exe` needs only Windows 10 or 11.
+
 
 | | |
 |---|---|
@@ -51,7 +93,7 @@ only does so after you say yes. You can also install them yourself:
 [python.org](https://www.python.org/downloads/windows/),
 [nodejs.org](https://nodejs.org/), [aria2](https://github.com/aria2/aria2/releases).
 
-## Install
+## Install (folder installation)
 
 1. Download `FETCH-<version>.zip` from the
    [latest release](https://github.com/tacobellerontop-sudo/f3tch/releases/latest)
@@ -215,6 +257,10 @@ there, and start FETCH again.
 
 ## Updating
 
+With `FETCH.exe`, use **Settings > Updates** as described under
+[Quick start](#quick-start-one-file), or stop FETCH and replace the file by
+hand. The rest of this section is about the folder installation.
+
 **From the dashboard.** An administrator opens **Settings > Updates**. The page
 shows the installed version, whether a newer release exists on GitHub, and its
 release notes. **Install update** asks for confirmation, then stops FETCH,
@@ -334,10 +380,14 @@ if you no longer need them.
   login cannot be downloaded.
 - One server process, one SQLite database: built for a household or a group of
   friends, not for hundreds of concurrent users.
+- `FETCH.exe` is built and tested on Windows by the automated checks: start
+  from an empty folder, first-run setup, update check, replacing itself with
+  a newer build, restart and stop. It is not code signed, so Windows
+  SmartScreen warns about it once. It has not been tried on a real desktop
+  by a person yet, where antivirus software may behave differently.
 - The PowerShell scripts are run on Windows Server with Windows PowerShell 5.1
   by the automated checks (install, start, update, stop, uninstall). The
-  winget prompts, the sign-in startup task and the **Install update** button
-  in the dashboard have not been exercised on a real desktop yet.
+  winget prompts and the sign-in startup task have not been exercised.
 - Changing the storage location does not move existing files for you.
 
 ## More documentation

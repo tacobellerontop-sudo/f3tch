@@ -133,9 +133,35 @@ needs batch mode for most `ALTER` operations; `env.py` enables it.
 ## Continuous integration and releases
 
 `.github/workflows/ci.yml` runs on every pull request and on `main`: the
-backend tests, the frontend type check, tests and build, and a Windows job
+backend tests, the frontend type check, tests and build, a Windows job that builds
+`FETCH.exe` and runs its self-test, and a Windows job
 that installs the freshly built package with `install.ps1`, starts it, checks
 the dashboard, runs `update.ps1 -SkipPull`, and then stops and uninstalls it.
+
+### The single-file executable
+
+`scripts/build_exe.py` builds `FETCH.exe` with PyInstaller (one file, console
+window) from `backend/fetch_exe.py`, bundling the built web interface and the
+Alembic migrations. Inside the executable `fetch_app.runtime.is_frozen()` is
+true: the install folder is the folder of the executable, the web interface
+and migrations are read from the bundle, and starting it without arguments
+means `run` (set up if needed, serve, open the browser).
+
+```bash
+pip install -r backend/requirements.txt -r backend/requirements-build.txt
+(cd frontend && npm ci && npm run build)
+python scripts/build_exe.py --out dist
+python scripts/exe_selftest.py dist/FETCH.exe   # dist/FETCH on Linux and macOS
+```
+
+`scripts/exe_selftest.py` drives the built file end to end, including a real
+self-update against a local stand-in for the GitHub releases API. CI runs it
+on Windows. An update of the executable is done by the server itself
+(`UpdateService.apply_executable`): download `FETCH.exe` and
+`FETCH.exe.sha256` from the release, compare, rename the running file to
+`FETCH.exe.old`, put the new one in place, start it with
+`run --after-update <old version>` and exit. The new process waits for the
+old one, backs up the database, migrates and serves.
 
 To publish a release:
 
@@ -146,8 +172,9 @@ To publish a release:
 `.github/workflows/release.yml` runs on every change to `main`. When the
 version has no release yet it runs CI, builds `FETCH-x.y.z.zip` with
 `scripts/package_release.py` (tracked program files plus the built interface
-and a `frontend/dist/.prebuilt` marker), publishes it as release `vx.y.z` with
-its `.sha256` file and the changelog section as release notes, and finally
+and a `frontend/dist/.prebuilt` marker), publishes it together with
+`FETCH.exe` as release `vx.y.z`, each with its `.sha256` file, and the
+changelog section as release notes, and finally
 installs the package on Windows and lets `update.ps1` download and verify the
 published release. Pushing a tag `vx.y.z` or starting the workflow by hand
 (Actions > Release > Run workflow) does the same.

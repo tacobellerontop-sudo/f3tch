@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.1.0] - 2026-11-17
+
+FETCH is now a single file.
+
+### Install
+
+Download `FETCH.exe`, put it in a folder of its own (for example `C:\FETCH`)
+and double-click it. Nothing else has to be installed: Python and the web
+interface are inside the file. FETCH creates its `config`, `data`, `logs` and
+`storage` folders next to the executable, and opens the dashboard in your
+browser with the setup token already filled in.
+
+Windows may show a "Windows protected your PC" notice the first time,
+because the file is not signed with a paid certificate. Choose **More info**,
+then **Run anyway**. You can check the download against `FETCH.exe.sha256`.
+
+Keep the FETCH window open while you use it. Closing it stops FETCH.
+
+### Changed
+
+- **Settings > Updates** now updates the executable itself: it downloads the
+  new `FETCH.exe`, verifies it against the published SHA-256 checksum, backs
+  up the database, swaps the file and restarts. No PowerShell is involved.
+- The folder installation (`FETCH-1.1.0.zip` with `install.ps1`) is still
+  published and still updates itself the same way as before.
+- `FETCH.exe` also accepts commands: `FETCH.exe status`, `FETCH.exe stop`,
+  `FETCH.exe create-admin`, `FETCH.exe run --no-browser`.
+
+### Moving from 1.0.0
+
+Stop FETCH, copy `config`, `data` and `storage` from the old folder into the
+folder that holds `FETCH.exe`, and start `FETCH.exe`. Or keep the folder
+installation and choose **Install update**.
+
+### Known limitations
+
+- `FETCH.exe` is not code signed.
+- Rapidgator, MEGA, Pixeldrain and Google Drive were tested against local
+  emulators only, not against the live services.
+
 ## [1.0.0] - 2026-11-16
 
 First release.

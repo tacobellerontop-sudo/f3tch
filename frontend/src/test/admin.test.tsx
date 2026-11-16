@@ -274,6 +274,15 @@ describe("updates", () => {
     expect(screen.getByRole("button", { name: "Install update" })).toBeDisabled();
   });
 
+  it("offers the single-file executable its own update and manual instructions", async () => {
+    renderApp("/settings/updates", admin({
+      "GET /admin/update": { ...newer, source: "exe", can_apply: false, apply_blocker: "FETCH cannot write to its own folder." },
+    }));
+    expect(await screen.findByText(/replace FETCH.exe with the one from the release page/)).toBeInTheDocument();
+    expect(screen.queryByText(/update\.ps1/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Install update" })).toBeDisabled();
+  });
+
   it("reports a failed check and a failed run without hiding the version", async () => {
     renderApp("/settings/updates", admin({
       "GET /admin/update": {

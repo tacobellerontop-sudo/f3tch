@@ -1,6 +1,6 @@
 [project]
 name = "fetch-app"
-version = "1.0.0"
+version = "1.1.0"
 description = "FETCH - self-hosted multi-user download manager"
 requires-python = ">=3.12"
 dynamic = ["dependencies"]

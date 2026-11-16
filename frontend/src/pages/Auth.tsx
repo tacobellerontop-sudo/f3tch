@@ -78,9 +78,16 @@ export function LoginPage() {
   );
 }
 
+function tokenFromAddress(): string {
+  const match = /^#setup=([A-Za-z0-9_-]{8,200})$/.exec(window.location.hash);
+  return match ? match[1] : "";
+}
+
 export function SetupPage() {
   const { bootstrap, signIn } = useAuth();
-  const [form, setForm] = useState({ setup_token: "", username: "", password: "", confirm: "" });
+  // FETCH.exe opens the dashboard with the token in the address fragment
+  // (which browsers never send to a server), so it does not have to be typed.
+  const [form, setForm] = useState(() => ({ setup_token: tokenFromAddress(), username: "", password: "", confirm: "" }));
   const setup = useMutation({
     mutationFn: () => api.post<Me>("/setup", { setup_token: form.setup_token, username: form.username, password: form.password }),
     onSuccess: signIn,
@@ -95,8 +102,8 @@ export function SetupPage() {
     <AuthLayout title="Welcome to FETCH" subtitle="Create the administrator account for this server.">
       <form onSubmit={onSubmit} className="space-y-4">
         <Notice>
-          The setup token was shown by <span className="font-mono">install.ps1</span> and is printed each time FETCH
-          starts until setup is done. It is also stored in <span className="font-mono">config/fetch.toml</span>.
+          The setup token is shown in the FETCH window (or by <span className="font-mono">install.ps1</span>) each time
+          FETCH starts until setup is done. It is also stored in <span className="font-mono">config/fetch.toml</span>.
         </Notice>
         <Field label="Setup token">
           {(props) => <Input {...props} autoFocus required spellCheck={false} autoComplete="off" className="font-mono" value={form.setup_token} onChange={set("setup_token")} />}

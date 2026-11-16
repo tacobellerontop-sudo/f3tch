@@ -1,6 +1,8 @@
 """Update checks against a local emulation of GitHub's releases API."""
 
+import hashlib
 import json
+import types
 
 import pytest
 
@@ -16,6 +18,7 @@ class GitHubEmulator(Emulator):
     def __init__(self) -> None:
         super().__init__()
         self.status = 200
+        self.files: dict[str, bytes] = {}
         self.release = {
             "tag_name": "v99.1.0",
             "name": "FETCH 99.1.0",
@@ -26,6 +29,8 @@ class GitHubEmulator(Emulator):
         }
 
     def handle(self, method, path, query, headers, body):
+        if method == "GET" and path.startswith("/download/") and path[10:] in self.files:
+            return 200, {"Content-Type": "application/octet-stream"}, self.files[path[10:]]
         if method == "GET" and path == "/repos/example/fetch/releases/latest":
             if self.status != 200:
                 return self.status, {}, {"message": "Not Found"}
@@ -179,3 +184,89 @@ def test_last_run_is_reported_and_stale_runs_expire(admin, github):
         json.dumps({"state": "running", "started_at": "2020-01-01T00:00:00Z"}), encoding="utf-8"
     )
     assert admin.get("/admin/update").json()["in_progress"] is False
+
+
+# -- the single-file executable ------------------------------------------------------
+
+
+@pytest.fixture
+def exe(admin, github, monkeypatch, tmp_path):
+    """Make the server believe it is FETCH.exe in ``tmp_path`` with a newer release out."""
+    path = tmp_path / "FETCH.exe"
+    path.write_bytes(b"old executable")
+    monkeypatch.setattr("fetch_app.updates.executable_path", lambda: path)
+    payload = b"new executable " * 50_000
+    github.files = {
+        "FETCH.exe": payload,
+        "FETCH.exe.sha256": f"{hashlib.sha256(payload).hexdigest()}  FETCH.exe\n".encode(),
+    }
+    github.release["assets"] = [
+        {"name": name, "browser_download_url": f"{github.base}/download/{name}"} for name in github.files
+    ]
+    ctx = admin.client.app.state.ctx
+    launched = []
+    monkeypatch.setattr(ctx.updates, "_launch", lambda target: launched.append(target))
+    server = types.SimpleNamespace(should_exit=False)
+    monkeypatch.setattr(ctx, "server", server)
+    return types.SimpleNamespace(path=path, payload=payload, launched=launched, server=server, ctx=ctx)
+
+
+def test_executable_reports_its_own_kind_of_package(admin, github, exe):
+    data = admin.get("/admin/update").json()
+    assert data["source"] == "exe"
+    assert data["package_available"] is True and data["can_apply"] is True
+
+    github.release["assets"] = [{"name": "FETCH-99.1.0.zip"}]
+    data = admin.get("/admin/update", params={"refresh": "true"}).json()
+    assert data["package_available"] is False
+
+
+def test_executable_replaces_itself_after_verifying_the_checksum(admin, github, exe):
+    response = admin.post("/admin/update/apply")
+    assert response.status_code == 200, response.text
+    assert exe.path.read_bytes() == exe.payload
+    assert exe.path.with_name("FETCH.exe.old").read_bytes() == b"old executable"
+    assert not exe.path.with_name("FETCH.exe.new").exists()
+    assert exe.launched == [exe.path]
+    assert exe.server.should_exit is True
+    status = json.loads(exe.ctx.boot.update_status_file.read_text(encoding="utf-8"))
+    assert status["state"] == "running" and status["to_version"] == "99.1.0"
+
+
+def test_executable_with_a_wrong_checksum_is_refused(admin, github, exe):
+    github.files["FETCH.exe.sha256"] = b"0" * 64 + b"  FETCH.exe\n"
+    response = admin.post("/admin/update/apply")
+    assert response.status_code == 409
+    assert "checksum" in response.json()["error"]["message"]
+    assert exe.path.read_bytes() == b"old executable"
+    assert not exe.path.with_name("FETCH.exe.new").exists()
+    assert exe.launched == [] and exe.server.should_exit is False
+    data = admin.get("/admin/update").json()
+    assert data["last_run"]["state"] == "failed" and data["in_progress"] is False
+
+
+def test_executable_is_only_downloaded_from_the_release_host(admin, github, exe):
+    github.release["assets"][0]["browser_download_url"] = "https://downloads.example/FETCH.exe"
+    github.release["assets"][1]["browser_download_url"] = "https://downloads.example/FETCH.exe.sha256"
+    response = admin.post("/admin/update/apply")
+    assert response.status_code == 409
+    assert "unexpected download address" in response.json()["error"]["message"]
+    assert exe.path.read_bytes() == b"old executable"
+
+
+def test_executable_goes_back_when_the_new_one_cannot_start(admin, github, exe, monkeypatch):
+    def fail(target):
+        raise OSError("blocked")
+
+    monkeypatch.setattr(exe.ctx.updates, "_launch", fail)
+    response = admin.post("/admin/update/apply")
+    assert response.status_code == 409
+    assert exe.path.read_bytes() == b"old executable"
+    assert exe.server.should_exit is False
+
+
+def test_executable_is_not_replaced_without_a_newer_release(admin, github, exe):
+    github.release["tag_name"] = f"v{__version__}"
+    response = admin.post("/admin/update/apply")
+    assert response.status_code == 409
+    assert exe.path.read_bytes() == b"old executable"

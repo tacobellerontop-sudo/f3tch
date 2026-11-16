@@ -6,6 +6,15 @@ import { bootstrap, HttpFailure, makeMe, renderApp, signedIn } from "./harness";
 const unauthenticated = new HttpFailure(401, "not_authenticated", "Sign in to continue.");
 
 describe("authentication", () => {
+  it("fills in the setup token when FETCH.exe opened the page with it", async () => {
+    renderApp("/setup#setup=token_from-the-EXE-1234", {
+      ...signedIn(makeMe("admin")),
+      "GET /bootstrap": { ...bootstrap, setup_required: true },
+      "GET /auth/me": unauthenticated,
+    });
+    expect(await screen.findByLabelText("Setup token")).toHaveValue("token_from-the-EXE-1234");
+  });
+
   it("sends a fresh installation to first-run setup and creates the administrator", async () => {
     const me = makeMe("admin");
     const { user, server } = renderApp("/", {

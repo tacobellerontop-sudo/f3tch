@@ -131,7 +131,127 @@ def _stop(boot: BootConfig, _args: argparse.Namespace) -> int:
     return 0
 
 
-def _serve(boot: BootConfig, args: argparse.Namespace) -> int:
+def _is_running(boot: BootConfig) -> str | None:
+    """URL of the server that already runs from this folder, if any."""
+    try:
+        control = json.loads(boot.control_file.read_text(encoding="utf-8"))
+        base = f"http://{_local_host(control.get('host', ''))}:{control['port']}"
+        with urllib.request.urlopen(f"{base}/api/health", timeout=3) as resp:
+            return base if resp.status == 200 else None
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _open_browser(url: str) -> None:
+    import webbrowser
+
+    try:
+        webbrowser.open(url)
+    except Exception:  # no browser on this machine: the address is printed anyway
+        pass
+
+
+def _record_update(boot: BootConfig, state: str, message: str, from_version: str) -> None:
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    try:
+        previous = json.loads(boot.update_status_file.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        previous = {}
+    try:
+        boot.update_status_file.write_text(json.dumps({
+            "state": state, "message": message, "from_version": from_version,
+            "to_version": __version__, "started_at": previous.get("started_at") or now,
+            "finished_at": now,
+        }), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _finish_update(boot: BootConfig, from_version: str) -> None:
+    """Runs in the new FETCH.exe right after the old one handed over."""
+    import shutil
+    import time
+
+    # The previous version is shutting down; wait until it has let go.
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline and _is_running(boot):
+        time.sleep(0.5)
+    time.sleep(1.0)
+    # Keep a copy of the database from before any migration.
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = boot.data_dir / "backups" / stamp
+    try:
+        backup.mkdir(parents=True, exist_ok=True)
+        for name in ("fetch.db", "fetch.db-wal", "fetch.db-shm"):
+            if (boot.data_dir / name).is_file():
+                shutil.copy2(boot.data_dir / name, backup / name)
+        if boot.config_file.is_file():
+            shutil.copy2(boot.config_file, backup / boot.config_file.name)
+        old = sorted((p for p in backup.parent.iterdir() if p.is_dir()), reverse=True)[10:]
+        for path in old:
+            shutil.rmtree(path, ignore_errors=True)
+    except OSError as exc:
+        print(f"The database could not be backed up before the update: {exc}", file=sys.stderr)
+
+
+def _remove_old_executable() -> None:
+    from .runtime import executable_path
+
+    exe = executable_path()
+    if exe is None:
+        return
+    try:
+        exe.with_name(exe.name + ".old").unlink()
+    except OSError:
+        pass  # not there, or the previous version is still exiting
+
+
+def _run(boot: BootConfig, args: argparse.Namespace) -> int:
+    """What double-clicking FETCH.exe does: set up if needed, serve, open the dashboard."""
+    from .db import run_migrations
+    from .storage import StorageManager
+
+    after_update = args.after_update or ""
+    if after_update:
+        _finish_update(boot, after_update)
+    else:
+        running = _is_running(boot)
+        if running:
+            print(f"FETCH is already running: {running}")
+            if not args.no_browser:
+                _open_browser(running)
+            return 0
+    _remove_old_executable()
+    try:
+        write_initial_config(boot)
+        boot = load_config(boot.home, boot.config_file)
+        boot.ensure_dirs()
+        run_migrations(boot.database_url)
+        StorageManager(boot.storage_root).ensure()
+    except Exception as exc:
+        print(f"FETCH could not be set up in {boot.home}: {exc}", file=sys.stderr)
+        if after_update:
+            _record_update(boot, "failed", f"FETCH {__version__} could not start: {exc}", after_update)
+        return 1
+
+    def started(url: str, setup_token: str | None) -> None:
+        if after_update:
+            _record_update(boot, "succeeded", f"Updated from {after_update} to {__version__}.", after_update)
+        print("  Keep this window open. Close it, or press Ctrl+C, to stop FETCH.\n")
+        if not args.no_browser:
+            # The fragment is not sent to the server; the setup page reads it.
+            _open_browser(f"{url}/setup#setup={setup_token}" if setup_token else url)
+
+    args.host, args.port = None, None
+    code = _serve(boot, args, on_started=started)
+    if code != 0 and after_update:
+        _record_update(boot, "failed", f"FETCH {__version__} was installed but did not start.", after_update)
+    return code
+
+
+def _serve(boot: BootConfig, args: argparse.Namespace, on_started=None) -> int:
     import uvicorn
 
     from .app import create_app
@@ -163,11 +283,27 @@ def _serve(boot: BootConfig, args: argparse.Namespace) -> int:
         pass
     shown = "localhost" if host in ("0.0.0.0", "::", "127.0.0.1") else host
     print(f"\n  FETCH {__version__} is running.\n  Dashboard: http://{shown}:{port}\n")
+    setup_token = None
     with ctx.db.session() as session:
         from .models import User
 
         if session.query(User.id).first() is None:
+            setup_token = boot.setup_token
             print(f"  First-time setup token: {boot.setup_token}\n")
+    if on_started is not None:
+        import threading
+        import time
+
+        def announce() -> None:
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline and not server.started:
+                if server.should_exit:
+                    return
+                time.sleep(0.1)
+            if server.started:
+                on_started(f"http://{shown}:{port}", setup_token)
+
+        threading.Thread(target=announce, daemon=True).start()
     try:
         server.run()
     except OSError as exc:
@@ -207,12 +343,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=None)
     p.set_defaults(func=_serve)
 
+    p = sub.add_parser("run", help="set up if needed, run the server and open the dashboard")
+    p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--after-update", default=None, help=argparse.SUPPRESS)
+    p.set_defaults(func=_run)
+
     p = sub.add_parser("status", help="print status as JSON")
     p.set_defaults(func=_status)
 
     p = sub.add_parser("stop", help="stop a running server gracefully")
     p.set_defaults(func=_stop)
 
+    if argv is None:
+        argv = sys.argv[1:]
+    from .runtime import is_frozen
+
+    if is_frozen() and not argv:
+        argv = ["run"]  # FETCH.exe was double-clicked
     args = parser.parse_args(argv)
     return args.func(load_config(), args)
 

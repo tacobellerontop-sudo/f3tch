@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes FETCH-<version>.zip as a GitHub release. The version comes from
+# Publishes FETCH.exe and FETCH-<version>.zip as a GitHub release. The version comes from
 # backend/fetch_app/__init__.py and the release is tagged v<version>.
 #
 # It runs when main changes (and publishes only if that version has no release
@@ -64,13 +64,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: fetch-package
+          pattern: fetch-*
+          merge-multiple: true
           path: dist
-      - name: Check the package
+      - name: Check the files
         run: |
           version="${{ needs.plan.outputs.version }}"
           test -f "dist/FETCH-$version.zip"
-          (cd dist && sha256sum -c "FETCH-$version.zip.sha256")
+          test -f dist/FETCH.exe
+          (cd dist && sha256sum -c "FETCH-$version.zip.sha256" && sha256sum -c FETCH.exe.sha256)
       - name: Release notes from the changelog
         run: |
           awk -v v="${{ needs.plan.outputs.version }}" '
@@ -84,6 +86,7 @@ jobs:
         run: |
           version="${{ needs.plan.outputs.version }}"
           gh release create "v$version" \
+            dist/FETCH.exe dist/FETCH.exe.sha256 \
             "dist/FETCH-$version.zip" "dist/FETCH-$version.zip.sha256" \
             --target "$GITHUB_SHA" --title "FETCH $version" --notes-file notes.md
 

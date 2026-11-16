@@ -19,16 +19,28 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from .runtime import executable_path, resource_dir
+
 DEFAULT_PORT = 8787
 DEFAULT_UPDATE_REPOSITORY = "tacobellerontop-sudo/f3tch"
 
 
 def default_home() -> Path:
-    """Install root: ``FETCH_HOME`` or the directory that contains ``backend/``."""
+    """Install root: ``FETCH_HOME``, the folder of FETCH.exe, or the one that contains ``backend/``."""
     env = os.environ.get("FETCH_HOME")
     if env:
         return Path(env).expanduser().resolve()
+    exe = executable_path()
+    if exe is not None:
+        return exe.parent
     return Path(__file__).resolve().parents[2]
+
+
+def default_frontend_dist() -> str:
+    """The web interface: bundled inside FETCH.exe, or built in ``frontend/dist``."""
+    if executable_path() is not None:
+        return str(resource_dir() / "frontend_dist")
+    return "frontend/dist"
 
 
 @dataclass
@@ -115,7 +127,7 @@ def load_config(home: Path | None = None, config_file: Path | None = None) -> Bo
         log_dir=_resolve(home, pick("FETCH_LOG_DIR", paths, "log_dir", "logs")),
         storage_root=_resolve(home, pick("FETCH_STORAGE_ROOT", paths, "storage_root", "storage")),
         frontend_dist=_resolve(
-            home, pick("FETCH_FRONTEND_DIST", paths, "frontend_dist", "frontend/dist")
+            home, pick("FETCH_FRONTEND_DIST", paths, "frontend_dist", default_frontend_dist())
         ),
         bind_address=str(pick("FETCH_BIND", server, "bind_address", "127.0.0.1")),
         port=int(pick("FETCH_PORT", server, "port", DEFAULT_PORT)),

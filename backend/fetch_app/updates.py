@@ -2,13 +2,21 @@
 
 The check is one anonymous ``GET`` to GitHub's public API for the configured
 repository; nothing about this installation is sent. Installing an update is
-never automatic: an administrator starts it, and the actual work is done by
-``update.ps1`` (the same script used from the command line), which verifies the
-release package's checksum before using it.
+never automatic: an administrator starts it.
+
+How it is installed depends on how FETCH runs:
+
+* The single-file ``FETCH.exe`` replaces itself: it downloads the new
+  executable from the release, verifies it against the published SHA-256
+  checksum, swaps the files and starts the new version.
+* A folder installation runs ``update.ps1`` (the same script used from the
+  command line), which verifies the release package's checksum before using it.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -19,11 +27,13 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import __version__
 from .config import BootConfig
 from .engine.http import HttpClient
 from .providers.base import ProviderError
+from .runtime import executable_path
 
 log = logging.getLogger("fetch.updates")
 
@@ -33,6 +43,9 @@ RUN_TIMEOUT = 45 * 60
 _REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
 _VERSION = re.compile(r"^v?(\d+)\.(\d+)(?:\.(\d+))?")
 MAX_NOTES = 20_000
+EXE_ASSET = "FETCH.exe"
+#: Refuse anything larger than this as an executable (the real one is far smaller).
+MAX_EXE_BYTES = 400 * 1024 * 1024
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:
@@ -122,7 +135,10 @@ class UpdateService:
         url = str(release.get("html_url") or "")
         assets = release.get("assets") if isinstance(release.get("assets"), list) else []
         names = {str(a.get("name") or "") for a in assets if isinstance(a, dict)}
-        package = any(re.fullmatch(r"FETCH-[\w.-]+\.zip", name) for name in names)
+        if self.mode == "exe":
+            package = EXE_ASSET in names and f"{EXE_ASSET}.sha256" in names
+        else:
+            package = any(re.fullmatch(r"FETCH-[\w.-]+\.zip", name) for name in names)
         return {
             "latest_version": version,
             "update_available": is_newer(tag, __version__),
@@ -135,6 +151,157 @@ class UpdateService:
         }
 
     # -- the updater --------------------------------------------------------------
+
+    @property
+    def executable(self) -> Path | None:
+        """FETCH.exe when this is the single-file build, else None."""
+        return executable_path()
+
+    @property
+    def mode(self) -> str:
+        if self.executable is not None:
+            return "exe"
+        return "git" if (self.boot.home / ".git").exists() else "release"
+
+    def _write_status(self, state: str, message: str, *, to_version: str = "", started_at: str = "") -> None:
+        now = _now()
+        try:
+            self.boot.update_status_file.write_text(
+                json.dumps({
+                    "state": state, "message": message, "from_version": __version__,
+                    "to_version": to_version, "started_at": started_at or now,
+                    "finished_at": "" if state == "running" else now,
+                }),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    def _asset_url(self, name: str) -> str:
+        release = self._release or {}
+        assets = release.get("assets") if isinstance(release.get("assets"), list) else []
+        for asset in assets:
+            if isinstance(asset, dict) and asset.get("name") == name:
+                url = str(asset.get("browser_download_url") or "")
+                api = urlsplit(self.boot.update_api_url)
+                target = urlsplit(url)
+                # Release files come from github.com (or from the configured
+                # server itself when another API address is set).
+                if url.startswith("https://github.com/") or (
+                    (target.scheme, target.netloc) == (api.scheme, api.netloc)
+                ):
+                    return url
+                raise UpdateError("The release points to an unexpected download address.")
+        raise UpdateError(f"The latest release has no {name} attached.")
+
+    async def _download_executable(self, target: Path) -> str:
+        """Download FETCH.exe to ``target`` and return its SHA-256."""
+        headers = {"User-Agent": "FETCH-updater", "Accept": "application/octet-stream",
+                   "Accept-Encoding": "identity"}
+        digest = hashlib.sha256()
+        received = 0
+        async with self.http.request("GET", self._asset_url(EXE_ASSET), headers=headers) as resp:
+            if resp.status != 200:
+                raise UpdateError(f"The download failed (HTTP {resp.status}).")
+            with open(target, "wb") as output:
+                async for chunk in resp.content.iter_chunked(256 * 1024):
+                    received += len(chunk)
+                    if received > MAX_EXE_BYTES:
+                        raise UpdateError("The download is larger than any FETCH release should be.")
+                    digest.update(chunk)
+                    output.write(chunk)
+        if received == 0:
+            raise UpdateError("The download was empty.")
+        return digest.hexdigest()
+
+    async def _published_checksum(self) -> str:
+        headers = {"User-Agent": "FETCH-updater", "Accept": "application/octet-stream",
+                   "Accept-Encoding": "identity"}
+        async with self.http.request("GET", self._asset_url(f"{EXE_ASSET}.sha256"), headers=headers) as resp:
+            if resp.status != 200:
+                raise UpdateError(f"The checksum could not be downloaded (HTTP {resp.status}).")
+            text = (await resp.content.read(4096)).decode("ascii", "replace")
+        value = (text.split() or [""])[0].lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise UpdateError("The published checksum is not a SHA-256 value.")
+        return value
+
+    def _launch(self, exe: Path) -> None:
+        """Start the new executable, detached, in a window of its own."""
+        env = dict(os.environ)
+        # Let the new single-file executable unpack itself, not reuse our files.
+        env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        command = [str(exe), "run", "--no-browser", "--after-update", __version__]
+        if os.name == "nt":
+            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+            last: OSError | None = None
+            for creationflags in (flags | breakaway, flags):
+                try:
+                    subprocess.Popen(command, cwd=str(exe.parent), env=env, close_fds=True,  # noqa: S603
+                                     creationflags=creationflags)
+                    return
+                except OSError as exc:
+                    last = exc
+            raise last or OSError("could not start")
+        log_file = self.boot.log_dir / "update.log"
+        self.boot.log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_file, "ab") as output:
+            subprocess.Popen(command, cwd=str(exe.parent), env=env, stdin=subprocess.DEVNULL,  # noqa: S603
+                             stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+
+    async def apply_executable(self, server: Any) -> None:
+        """Replace FETCH.exe with the latest release and hand over to it."""
+        blocker = self.apply_blocker(managed=server is not None)
+        if blocker:
+            raise UpdateError(blocker)
+        if self.in_progress():
+            raise UpdateError("An update is already running.")
+        if self._release is None:
+            await self.check()
+        info = self._release_info()
+        if not info["update_available"]:
+            raise UpdateError(self._error or "There is no newer release to install.")
+        exe = self.executable
+        assert exe is not None
+        version = str(info["latest_version"])
+        started = _now()
+        self._write_status("running", f"Downloading FETCH {version}.", to_version=version, started_at=started)
+        new, old = exe.with_name(exe.name + ".new"), exe.with_name(exe.name + ".old")
+        try:
+            expected = await self._published_checksum()
+            actual = await self._download_executable(new)
+            if actual != expected:
+                raise UpdateError(
+                    "The downloaded file does not match its published SHA-256 checksum. Nothing was changed."
+                )
+            if os.name != "nt":
+                os.chmod(new, 0o755)
+            # A running executable cannot be overwritten, but it can be renamed.
+            try:
+                old.unlink()
+            except OSError:
+                pass
+            os.replace(exe, old)
+            try:
+                os.replace(new, exe)
+                await asyncio.to_thread(self._launch, exe)
+            except OSError as exc:
+                os.replace(old, exe)  # put the running version back
+                raise UpdateError(f"The new version could not be started: {exc}") from exc
+        except (UpdateError, ProviderError, OSError) as exc:
+            try:
+                new.unlink()
+            except OSError:
+                pass
+            message = exc.message if isinstance(exc, ProviderError) else str(exc)
+            if isinstance(exc, OSError) and not isinstance(exc, UpdateError):
+                message = f"The update could not be written next to {exe.name}: {exc}"
+            self._write_status("failed", message, to_version=version, started_at=started)
+            raise UpdateError(message) from exc
+        log.info("Update installed, handing over", extra={"from": __version__, "to": version})
+        self._write_status("running", f"Starting FETCH {version}.", to_version=version, started_at=started)
+        server.should_exit = True
 
     def last_run(self) -> dict[str, Any] | None:
         """What ``update.ps1`` recorded about its most recent run."""
@@ -174,6 +341,13 @@ class UpdateService:
 
     def apply_blocker(self, *, managed: bool) -> str:
         """Why the update cannot be installed from the dashboard ('' if it can)."""
+        exe = self.executable
+        if exe is not None:
+            if not managed:
+                return "This server cannot restart itself."
+            if not os.access(exe.parent, os.W_OK):
+                return f"FETCH cannot write to its own folder ({exe.parent}), so it cannot replace itself."
+            return ""
         if os.name != "nt":
             return (
                 "Installing from the dashboard is available on Windows. On this system "
@@ -246,7 +420,7 @@ class UpdateService:
             **self._release_info(),
             "can_apply": not blocker,
             "apply_blocker": blocker,
-            "source": "git" if (self.boot.home / ".git").exists() else "release",
+            "source": self.mode,
             "in_progress": self.in_progress(),
             "last_run": self.last_run(),
         }

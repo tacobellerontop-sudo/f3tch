@@ -133,7 +133,7 @@ activity for regular users.
 | `GET /api/admin/health` | Health checks, versions, disk, queue and connection counters |
 | `GET /api/admin/logs?limit=&level=&q=` | Tail of the structured log |
 | `GET /api/admin/update?refresh=true\|false` | Installed and latest version, release notes, whether an update can be installed from here (`can_apply`, `apply_blocker`) and the result of the last update run. The GitHub answer is cached for six hours; `refresh=true` asks again |
-| `POST /api/admin/update/apply` | Start `update.ps1` in the background. `409 update_unavailable` when there is nothing to install or this server cannot update itself (not Windows, not started with `start.ps1`, an update already running) |
+| `POST /api/admin/update/apply` | Install the latest release. `FETCH.exe` downloads and verifies the new executable during this request, then restarts; a folder installation starts `update.ps1` in the background. `409 update_unavailable` when there is nothing to install or this server cannot update itself (not Windows, not started with `start.ps1`, an update already running) |
 | `POST /api/admin/workers/restart` | Requeue every running transfer |
 | `POST /api/admin/cleanup` | Run storage maintenance now |
 

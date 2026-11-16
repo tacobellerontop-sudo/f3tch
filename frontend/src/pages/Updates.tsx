@@ -135,19 +135,28 @@ export function UpdatesTab() {
               <Button
                 variant="primary"
                 icon={<DownloadCloud className="h-4 w-4" />}
-                disabled={!data.can_apply || data.in_progress || (data.source === "release" && !data.package_available)}
+                disabled={!data.can_apply || data.in_progress || (data.source !== "git" && !data.package_available)}
                 onClick={() => setConfirm(true)}
               >
                 Install update
               </Button>
-              <span className="text-xs text-subtle">Takes a few minutes. A backup of the database is made first.</span>
+              <span className="text-xs text-subtle">
+                {data.source === "exe" ? "Takes about a minute." : "Takes a few minutes."} A backup of the database is made first.
+              </span>
             </div>
             {!data.can_apply && (
               <Notice tone="warning" className="mt-3">
-                {data.apply_blocker} To update by hand, run <code className="font-mono">.\update.ps1</code> in the FETCH folder.
+                {data.apply_blocker}{" "}
+                {data.source === "exe" ? (
+                  <>To update by hand, stop FETCH and replace FETCH.exe with the one from the release page.</>
+                ) : (
+                  <>
+                    To update by hand, run <code className="font-mono">.\update.ps1</code> in the FETCH folder.
+                  </>
+                )}
               </Notice>
             )}
-            {data.can_apply && data.source === "release" && !data.package_available && (
+            {data.can_apply && data.source !== "git" && !data.package_available && (
               <Notice tone="warning" className="mt-3">
                 This release has no installable package attached, so it cannot be installed from here.
               </Notice>
@@ -173,7 +182,7 @@ export function UpdatesTab() {
             <p className="mt-1 break-words text-xs leading-5 text-muted">{run.message}</p>
             <p className="mt-1 text-2xs text-subtle">
               {run.finished_at ? formatDateTime(run.finished_at) : ""}
-              {run.state === "failed" ? " · Details are in logs\\update.log. FETCH keeps running on the previous version where possible." : ""}
+              {run.state === "failed" ? " · FETCH keeps running on the previous version where possible. Details are in the logs folder." : ""}
             </p>
           </div>
         </Card>
@@ -196,10 +205,10 @@ export function UpdatesTab() {
         message={
           <>
             FETCH stops for a few minutes and everyone is disconnected. Running downloads are saved and continue afterwards.
-            The database and configuration are backed up first, and the package is verified against its published checksum.
+            The database and configuration are backed up first, and the download is verified against its published checksum.
           </>
         }
-        confirmLabel="Install update"
+        confirmLabel={install.isPending ? "Downloading" : "Install update"}
         loading={install.isPending}
         onConfirm={() => install.mutate()}
       />
@@ -286,7 +295,7 @@ export function UpdatingScreen({ state }: { state: UpdatingState }) {
           {phase === "installing" && "Installing the new version. The page reconnects by itself; you can leave it open."}
           {phase === "done" && (version ? `Now running version ${version}. Reloading.` : "Reloading.")}
           {phase === "timeout" &&
-            "The server has not come back yet. On the host computer, look at logs\\update.log and run .\\start.ps1 if FETCH is not running."}
+            "The server has not come back yet. On the host computer, check whether FETCH is running and start it again if it is not; the logs folder has details."}
         </p>
         {phase === "timeout" && (
           <Button variant="secondary" className="mt-4" onClick={leave}>

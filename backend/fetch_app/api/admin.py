@@ -517,12 +517,15 @@ async def update_status(admin: AdminUser, ctx: Ctx, db: Db, refresh: bool = Fals
 
 @router.post("/admin/update/apply")
 async def apply_update(request: Request, admin: AdminUser, ctx: Ctx, db: Db) -> dict:
-    """Start update.ps1, which stops FETCH, installs the update and restarts it."""
+    """Install the latest release: FETCH.exe replaces itself, a folder install runs update.ps1."""
     from ..updates import UpdateError
 
     db.commit()
     try:
-        await asyncio.to_thread(ctx.updates.start, managed=ctx.server is not None)
+        if ctx.updates.mode == "exe":
+            await ctx.updates.apply_executable(ctx.server)
+        else:
+            await asyncio.to_thread(ctx.updates.start, managed=ctx.server is not None)
     except UpdateError as exc:
         raise ApiError(409, "update_unavailable", str(exc)) from exc
     ctx.activity.record(

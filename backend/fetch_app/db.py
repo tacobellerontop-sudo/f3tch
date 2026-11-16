@@ -66,7 +66,9 @@ def run_migrations(database_url: str) -> None:
     from alembic import command
     from alembic.config import Config
 
-    backend_dir = Path(__file__).resolve().parents[1]
+    from .runtime import resource_dir
+
+    backend_dir = resource_dir()
     cfg = Config(str(backend_dir / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_dir / "alembic"))
     cfg.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
