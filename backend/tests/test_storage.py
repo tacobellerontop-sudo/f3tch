@@ -195,8 +195,15 @@ def test_large_file_is_streamed_not_buffered(admin, boot):
     class Enough(Exception):
         pass
 
+    import asyncio
+
+    requested = []
+
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        if not requested:
+            requested.append(True)
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await asyncio.Event().wait()  # the client stays connected and sends nothing more
 
     async def send(message):
         if message["type"] == "http.response.start":
@@ -212,8 +219,9 @@ def test_large_file_is_streamed_not_buffered(admin, boot):
     async def run():
         try:
             await admin.client.app(scope, receive, send)
-        except Enough:
-            pass
+        except BaseException as error:  # Enough, possibly wrapped in an exception group
+            if seen["received"] < 256 * 1024 * 1024:
+                raise error
 
     tracemalloc.start()
     admin.client.portal.call(run)
