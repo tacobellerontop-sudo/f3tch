@@ -86,8 +86,11 @@ def _status(boot: BootConfig, _args: argparse.Namespace) -> int:
     running = None
     try:
         control = json.loads(boot.control_file.read_text(encoding="utf-8"))
-        with urllib.request.urlopen(f"http://127.0.0.1:{control['port']}/api/health", timeout=3) as resp:
+        url = f"http://{_local_host(control.get('host', ''))}:{control['port']}/api/health"
+        with urllib.request.urlopen(url, timeout=3) as resp:
             running = resp.status == 200
+        if running:  # report what the running server actually listens on
+            host, port = control.get("host", host), control["port"]
     except (OSError, ValueError, KeyError):
         running = False
     print(json.dumps({
@@ -98,6 +101,15 @@ def _status(boot: BootConfig, _args: argparse.Namespace) -> int:
     return 0
 
 
+def _local_host(host: str) -> str:
+    """Address on which this machine can reach a server bound to ``host``."""
+    if host in ("", "0.0.0.0"):
+        return "127.0.0.1"
+    if host == "::":
+        return "[::1]"
+    return f"[{host}]" if ":" in host else host
+
+
 def _stop(boot: BootConfig, _args: argparse.Namespace) -> int:
     try:
         control = json.loads(boot.control_file.read_text(encoding="utf-8"))
@@ -105,7 +117,7 @@ def _stop(boot: BootConfig, _args: argparse.Namespace) -> int:
         print("FETCH does not appear to be running.")
         return 1
     request = urllib.request.Request(
-        f"http://127.0.0.1:{control['port']}/api/control/shutdown",
+        f"http://{_local_host(control.get('host', ''))}:{control['port']}/api/control/shutdown",
         method="POST", headers={"X-Fetch-Control": control["token"]}, data=b"",
     )
     try:
@@ -142,7 +154,7 @@ def _serve(boot: BootConfig, args: argparse.Namespace) -> int:
     server = uvicorn.Server(config)
     ctx.server = server
     boot.pid_file.write_text(str(os.getpid()), encoding="utf-8")
-    boot.control_file.write_text(json.dumps({"port": port, "token": ctx.control_token, "pid": os.getpid()}),
+    boot.control_file.write_text(json.dumps({"host": host, "port": port, "token": ctx.control_token, "pid": os.getpid()}),
                                  encoding="utf-8")
     try:
         os.chmod(boot.control_file, 0o600)
@@ -170,6 +182,11 @@ def _serve(boot: BootConfig, args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # pythonw.exe (used by the Windows startup task) has no console streams.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
     parser = argparse.ArgumentParser(prog="fetch_app", description="FETCH download manager")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)

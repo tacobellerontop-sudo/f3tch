@@ -513,7 +513,13 @@ def control_shutdown(request: Request) -> dict:
     ctx = get_ctx(request)
     peer = request.client.host if request.client else ""
     token = request.headers.get("x-fetch-control", "")
-    if peer not in ("127.0.0.1", "::1") or not ctx.control_token or not hmac.compare_digest(
+    # Local only: loopback, or this machine's own address when FETCH is bound to
+    # one specific interface (a remote peer can never have that source address).
+    local = {"127.0.0.1", "::1"}
+    bound = ctx.settings.effective_bind()[0]
+    if bound not in ("0.0.0.0", "::", ""):
+        local.add(bound)
+    if peer not in local or not ctx.control_token or not hmac.compare_digest(
         token, ctx.control_token
     ):
         raise ApiError(404, "not_found", "Not found.")

@@ -396,7 +396,7 @@ function DownloadsTab({ payload }: { payload: SettingsPayload }) {
             <Num label="Simultaneous downloads (server)" hint="Across all users." min={1} max={32} value={values.max_global_concurrent} onChange={(value) => set("max_global_concurrent", value)} />
             <Num label="Simultaneous downloads (per user)" hint="A user's own quota can lower this." min={1} max={32} value={values.max_per_user_concurrent} onChange={(value) => set("max_per_user_concurrent", value)} />
             <Num label="Automatic retries" hint="For temporary errors only. 0 turns retries off." max={20} value={values.retry_count} onChange={(value) => set("retry_count", value)} />
-            <Num label="Retry delay (seconds)" hint="Doubles after each failed attempt." min={1} max={3600} value={values.retry_delay_seconds} onChange={(value) => set("retry_delay_seconds", value)} />
+            <Num label="Retry delay (seconds)" hint="Wait before each automatic retry." min={1} max={3600} value={values.retry_delay_seconds} onChange={(value) => set("retry_delay_seconds", value)} />
             <Field label="Default priority">
               {(props) => (
                 <Select {...props} className="w-full" value={values.default_priority} onChange={(event) => set("default_priority", Number(event.target.value))}>
@@ -484,8 +484,7 @@ function NetworkTab({ payload }: { payload: SettingsPayload }) {
             <code className="font-mono text-fg">tailscale serve --bg {port}</code>. Tailscale then publishes FETCH over HTTPS at this machine's tailnet name, to your tailnet only.
           </li>
           <li>
-            Set the public URL below to that address, add <code className="font-mono text-fg">127.0.0.1</code> to the trusted proxies so sign-in limits see real client addresses, and set{" "}
-            <code className="font-mono text-fg">cookie_secure = true</code> in the configuration file.
+            Set the public URL below to that address, and add <code className="font-mono text-fg">127.0.0.1</code> to the trusted proxies. Sign-in limits then see real client addresses and the session cookie is marked Secure.
           </li>
           <li>Create an invitation on the Users page and send the link.</li>
         </ol>
