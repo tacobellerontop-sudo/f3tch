@@ -1,0 +1,23 @@
+[project]
+name = "fetch-app"
+version = "1.0.0"
+description = "FETCH - self-hosted multi-user download manager"
+requires-python = ">=3.12"
+dynamic = ["dependencies"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["fetch_app", "fetch_app.api", "fetch_app.engine", "fetch_app.providers", "fetch_app.security"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = ["aria2: needs the aria2c executable"]
