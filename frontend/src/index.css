@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens. Components only ever use these, never raw colours. */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: 13 14 17;
+  --surface: 19 21 25;
+  --raised: 25 28 33;
+  --overlay: 30 33 39;
+  --line: 36 39 46;
+  --line-strong: 51 55 64;
+  --fg: 231 233 238;
+  --muted: 150 157 170;
+  --subtle: 102 109 122;
+  --accent: 124 147 255;
+  --accent-fg: 12 14 22;
+  --success: 74 191 140;
+  --warning: 224 172 78;
+  --danger: 236 106 115;
+  --info: 110 176 240;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --canvas: 246 247 249;
+  --surface: 255 255 255;
+  --raised: 249 250 251;
+  --overlay: 255 255 255;
+  --line: 229 231 236;
+  --line-strong: 208 212 220;
+  --fg: 24 27 33;
+  --muted: 92 99 112;
+  --subtle: 133 140 153;
+  --accent: 67 88 214;
+  --accent-fg: 255 255 255;
+  --success: 22 138 91;
+  --warning: 176 118 16;
+  --danger: 208 59 72;
+  --info: 34 113 190;
+}
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+  html {
+    @apply bg-canvas text-fg antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply min-h-screen bg-canvas font-sans text-[13.5px] leading-5;
+  }
+  ::selection {
+    background: rgb(var(--accent) / 0.3);
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/60 ring-offset-0;
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+  /* Slim, unobtrusive scrollbars that match the surface. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line-strong)) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--line-strong));
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

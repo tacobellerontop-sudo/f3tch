@@ -1,0 +1,38 @@
+# Example of config/fetch.toml.
+#
+# install.ps1 (or `python -m fetch_app init`) creates the real file with freshly
+# generated secrets; you normally never write it by hand. Keep the real file
+# private: secret_key encrypts the provider credentials stored in the database.
+#
+# Every value can also be given as an environment variable (FETCH_PORT,
+# FETCH_BIND_ADDRESS, ...). See docs/CONFIGURATION.md.
+
+[paths]
+# Relative paths are resolved against the FETCH folder.
+data_dir = "data"
+log_dir = "logs"
+storage_root = "storage"
+
+[server]
+# Used until overridden in Settings > Network.
+# 127.0.0.1 = this computer only (recommended together with `tailscale serve`).
+bind_address = "127.0.0.1"
+port = 8787
+log_level = "INFO"
+
+[updates]
+# GitHub repository whose releases are offered in Settings > Updates and
+# installed by update.ps1. Set to "" to turn update checks off.
+repository = "tacobellerontop-sudo/f3tch"
+
+[security]
+# A Fernet key. Generate one with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+secret_key = "REPLACE-WITH-A-GENERATED-KEY"
+# Required once, to create the first administrator from the browser.
+setup_token = "REPLACE-WITH-A-LONG-RANDOM-STRING"
+# Hosts or CIDR ranges that downloads may reach although they are private
+# addresses, e.g. ["192.168.1.20", "10.0.0.0/24"]. Leave empty unless needed.
+ssrf_allowlist = []
+# "auto": Secure cookies when the request arrived over HTTPS. "true" / "false" force it.
+cookie_secure = "auto"

@@ -1,0 +1,125 @@
+name: Release
+
+# Publishes FETCH.exe and FETCH-<version>.zip as a GitHub release. The version comes from
+# backend/fetch_app/__init__.py and the release is tagged v<version>.
+#
+# It runs when main changes (and publishes only if that version has no release
+# yet), when a tag v<version> is pushed, or when started by hand.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Decide whether to publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' backend/fetch_app/__init__.py)"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Could not read a version like 1.2.3 (got '$version')." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version." >&2
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release v$version already exists; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish the release
+    needs: [plan, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fetch-*
+          merge-multiple: true
+          path: dist
+      - name: Check the files
+        run: |
+          version="${{ needs.plan.outputs.version }}"
+          test -f "dist/FETCH-$version.zip"
+          test -f dist/FETCH.exe
+          (cd dist && sha256sum -c "FETCH-$version.zip.sha256" && sha256sum -c FETCH.exe.sha256)
+      - name: Release notes from the changelog
+        run: |
+          awk -v v="${{ needs.plan.outputs.version }}" '
+            /^## / { if (found) exit; if (index($0, "[" v "]")) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ needs.plan.outputs.version }}"
+          gh release create "v$version" \
+            dist/FETCH.exe dist/FETCH.exe.sha256 \
+            "dist/FETCH-$version.zip" "dist/FETCH-$version.zip.sha256" \
+            --target "$GITHUB_SHA" --title "FETCH $version" --notes-file notes.md
+
+  verify:
+    name: Update from the published release on Windows
+    needs: publish
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: fetch-package
+          path: package
+      - name: Install the package, then update from the published release
+        run: |
+          $zip = Get-ChildItem package -Filter 'FETCH-*.zip' | Select-Object -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath C:\fetch-test
+          Set-Location C:\fetch-test\FETCH
+          .\install.ps1 -Yes -SkipAria2
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 exited with $LASTEXITCODE" }
+          .\start.ps1 -NoBrowser
+          if ($LASTEXITCODE -ne 0) { throw "start.ps1 exited with $LASTEXITCODE" }
+
+          # Download, verify and reinstall the published release.
+          .\update.ps1 -Force -Unattended
+          if ($LASTEXITCODE -ne 0) { throw "update.ps1 exited with $LASTEXITCODE" }
+          $status = Get-Content data\update-status.json -Raw | ConvertFrom-Json
+          if ($status.state -ne 'succeeded') { throw "Update state is $($status.state): $($status.message)" }
+          $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8787/api/health' -UseBasicParsing
+          if ($health.status -ne 'ok') { throw 'FETCH did not come back after the update.' }
+          .\stop.ps1

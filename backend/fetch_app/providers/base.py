@@ -1,0 +1,242 @@
+"""The provider plugin contract.
+
+A provider adapter knows how to recognise links of one hosting service, look
+up file metadata, and turn a link into something the download engine can
+transfer. The engine never contains provider-specific logic: it talks to
+adapters only through :class:`ProviderAdapter`.
+
+Adapters must describe themselves truthfully through :class:`Capabilities`.
+An operation a provider cannot perform raises :class:`ProviderError` with a
+specific ``code``; it is never silently faked. Adapters must not attempt to
+defeat a provider's access controls (Premium checks, CAPTCHAs, waiting
+periods, quotas): those conditions are reported to the user instead.
+"""
+
+from __future__ import annotations
+
+import logging
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..engine.http import HttpClient
+    from ..engine.transfer import Transfer
+
+
+class ErrorCode:
+    UNSUPPORTED = "unsupported_link"
+    NOT_FOUND = "not_found"
+    AUTH_REQUIRED = "auth_required"
+    AUTH_FAILED = "auth_failed"
+    CAPTCHA_REQUIRED = "captcha_required"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    WAIT_REQUIRED = "wait_required"
+    RATE_LIMITED = "rate_limited"
+    UNAVAILABLE = "provider_unavailable"
+    NETWORK = "network_error"
+    UNSAFE_URL = "unsafe_url"
+    DISABLED = "provider_disabled"
+    VERIFY_FAILED = "verification_failed"
+    PROTOCOL = "unexpected_response"
+
+
+class ProviderError(Exception):
+    """A provider-level failure with a stable code and a user-safe message."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        wait_seconds: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+        # Set when the provider imposes a waiting period that FETCH will honour.
+        self.wait_seconds = wait_seconds
+
+
+@dataclass(frozen=True)
+class Capabilities:
+    inspect: bool = True
+    download: bool = True
+    resume: bool = True
+    #: Works without any stored credentials.
+    anonymous: bool = True
+    #: Accepts administrator-supplied credentials.
+    credentials: bool = False
+    #: Cannot download anything until credentials are configured.
+    requires_credentials: bool = False
+    folders: bool = False
+    checksum: bool = False
+    #: May impose waiting periods that FETCH waits out (never skips).
+    waits: bool = False
+    #: May demand a CAPTCHA, which FETCH reports and does not solve.
+    captcha: bool = False
+
+
+@dataclass(frozen=True)
+class CredentialField:
+    name: str
+    label: str
+    kind: str = "password"  # "text" | "password" | "textarea"
+    required: bool = False
+    help: str = ""
+
+
+@dataclass
+class LinkInfo:
+    url: str
+    provider: str
+    supported: bool = True
+    filename: str = ""
+    size: int | None = None
+    resumable: bool | None = None
+    #: Machine-readable reason when ``supported`` is false or a restriction applies.
+    restriction: str = ""
+    message: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ResolvedDownload:
+    """Everything the engine needs to transfer one file."""
+
+    url: str
+    filename: str = ""
+    size: int | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    resumable: bool = True
+    #: ("sha256" | "md5" | "sha1", hex digest) checked in the Verifying state.
+    checksum: tuple[str, str] | None = None
+    #: Stable identity of the content, allowing resume across fresh URLs.
+    identity: str | None = None
+    #: Whether the multi-connection aria2 engine may be used.
+    allow_aria2: bool = True
+    #: Resume offsets are rounded down to a multiple of this (stream ciphers).
+    block_align: int = 1
+    #: Optional ``(offset, data) -> data`` applied to every received chunk.
+    transform: Callable[[int, bytes], bytes] | None = None
+    #: Optional extra integrity check run on the finished file.
+    verifier: Callable[[Path], Awaitable[None]] | None = None
+    #: Maps an HTTP error from the file server to a :class:`ProviderError`.
+    error_mapper: Callable[[int, dict[str, str], str], ProviderError | None] | None = None
+
+
+@dataclass
+class HealthReport:
+    ok: bool
+    message: str
+    account: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ProviderContext:
+    """Per-call services handed to an adapter."""
+
+    http: HttpClient
+    credentials: dict[str, str] | None = None
+    log: logging.Logger = field(default_factory=lambda: logging.getLogger("fetch.provider"))
+
+
+class ProviderAdapter(ABC):
+    """Base class every provider plugin implements."""
+
+    #: Stable identifier (also the primary key in the ``providers`` table).
+    id: str = ""
+    name: str = ""
+    description: str = ""
+    homepage: str = ""
+    #: Lower numbers are asked first by the registry.
+    priority: int = 100
+    capabilities: Capabilities = Capabilities()
+    credential_fields: tuple[CredentialField, ...] = ()
+    #: Plain-language notes about limits, shown on the Providers page.
+    notes: tuple[str, ...] = ()
+    #: How far this integration was verified; reported as-is, never embellished.
+    verification: str = ""
+
+    # -- recognition -----------------------------------------------------------
+
+    @abstractmethod
+    def can_handle(self, url: str) -> bool:
+        """Whether ``url`` belongs to this provider (pure, no I/O)."""
+
+    # -- metadata --------------------------------------------------------------
+
+    @abstractmethod
+    async def inspect(self, url: str, ctx: ProviderContext) -> LinkInfo:
+        """Look up the file behind ``url`` without downloading it."""
+
+    # -- authentication --------------------------------------------------------
+
+    async def authenticate(self, ctx: ProviderContext) -> HealthReport:
+        """Validate the stored credentials. Default: provider takes none."""
+        return HealthReport(ok=True, message="This provider does not use credentials.")
+
+    async def test(self, ctx: ProviderContext) -> HealthReport:
+        """Connectivity / account check used by the Providers page."""
+        return await self.authenticate(ctx)
+
+    def validate_credentials(self, values: dict[str, str]) -> dict[str, str]:
+        """Check a credentials document before it is stored."""
+        allowed = {f.name: f for f in self.credential_fields}
+        cleaned: dict[str, str] = {}
+        for key, value in values.items():
+            if key not in allowed:
+                raise ValueError(f"Unknown credential field '{key}'.")
+            if not isinstance(value, str):
+                raise ValueError(f"Credential field '{key}' must be text.")
+            if value.strip():
+                cleaned[key] = value.strip()
+        for spec in self.credential_fields:
+            if spec.required and spec.name not in cleaned:
+                raise ValueError(f"{spec.label} is required.")
+        return cleaned
+
+    # -- downloading -----------------------------------------------------------
+
+    @abstractmethod
+    async def resolve(self, url: str, ctx: ProviderContext) -> ResolvedDownload:
+        """Turn ``url`` into a transferable download (the provider's own workflow)."""
+
+    async def download(self, transfer: Transfer, resolved: ResolvedDownload) -> None:
+        """Transfer the file to ``transfer.destination``.
+
+        The default hands the resolved request to the shared transfer engines
+        (native async HTTP or aria2). Adapters with a custom protocol override it.
+        """
+        await transfer.fetch(resolved)
+
+    # -- job control (delegated to the download manager) -----------------------
+
+    def get_status(self, job_id: int) -> dict[str, Any] | None:
+        """Live status of one of this provider's jobs, if it is running."""
+        runtime = getattr(self, "runtime", None)
+        return runtime.job_status(job_id) if runtime else None
+
+    async def cancel(self, job_id: int) -> bool:
+        runtime = getattr(self, "runtime", None)
+        return await runtime.cancel_job(job_id) if runtime else False
+
+    # -- description -----------------------------------------------------------
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "homepage": self.homepage,
+            "capabilities": asdict(self.capabilities),
+            "notes": list(self.notes),
+            "verification": self.verification,
+            "credential_fields": [asdict(f) for f in self.credential_fields],
+        }

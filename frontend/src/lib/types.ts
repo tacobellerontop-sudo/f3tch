@@ -1,0 +1,408 @@
+// Shapes of the FETCH API. Kept in one place so that the frontend and the
+// backend (backend/fetch_app/schemas.py) can be compared side by side.
+
+export type Role = "admin" | "user";
+export type ThemeChoice = "dark" | "light" | "system";
+
+export interface User {
+  id: number;
+  username: string;
+  display_name: string;
+  role: Role;
+  is_active: boolean;
+  theme: "" | ThemeChoice;
+  must_change_password: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface QuotaLimits {
+  max_concurrent: number;
+  max_storage_bytes: number;
+  max_file_bytes: number;
+  daily_downloads: number;
+  bandwidth_bps: number;
+  max_queued: number;
+}
+
+export interface QuotaSummary {
+  limits: QuotaLimits;
+  usage: {
+    storage_bytes: number;
+    active_downloads: number;
+    open_downloads: number;
+    downloads_today: number;
+  };
+}
+
+export interface Me {
+  user: User;
+  csrf_token: string;
+  quota: QuotaSummary;
+  session_expires_at: string;
+}
+
+export interface Bootstrap {
+  app_name: string;
+  version: string;
+  setup_required: boolean;
+  invitations_required: boolean;
+  default_theme: ThemeChoice;
+  language: string;
+  password_min_length: number;
+  password_require_mixed: boolean;
+}
+
+export type DownloadState =
+  | "pending"
+  | "queued"
+  | "inspecting"
+  | "waiting"
+  | "downloading"
+  | "paused"
+  | "verifying"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface Download {
+  id: number;
+  user_id: number;
+  owner: string;
+  url: string;
+  provider: string;
+  filename: string;
+  state: DownloadState;
+  priority: number;
+  position: number;
+  destination: "private" | "shared";
+  folder: string;
+  total_bytes: number | null;
+  downloaded_bytes: number;
+  speed_bps: number;
+  avg_speed_bps: number;
+  eta_seconds: number | null;
+  engine: string;
+  attempts: number;
+  max_attempts: number;
+  error_code: string;
+  error_message: string;
+  wait_until: string | null;
+  wait_reason: string;
+  final_path: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface Progress {
+  id: number;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  speed_bps: number;
+  avg_speed_bps: number;
+  eta_seconds: number | null;
+}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DownloadStats {
+  by_state: Record<DownloadState, number>;
+  active: number;
+  queued: number;
+  completed: number;
+  failed: number;
+  speed_bps: number;
+}
+
+export interface LinkInfo {
+  url: string;
+  provider: string;
+  provider_name: string;
+  supported: boolean;
+  filename: string;
+  size: number | null;
+  resumable: boolean | null;
+  restriction: string;
+  message: string;
+}
+
+export interface SubmitResult {
+  created: Download[];
+  rejected: { url: string; provider: string; code: string; message: string }[];
+}
+
+export type DownloadAction = "pause" | "resume" | "cancel" | "retry";
+
+export interface FileItem {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  type: string;
+  modified_at: string;
+  downloaded_at: string | null;
+  provider: string;
+  source_url: string;
+  owner: string;
+  can_delete: boolean;
+}
+
+export interface FileListing extends Page<FileItem> {
+  scope: "private" | "shared";
+  path: string;
+  owner_id: number | null;
+  can_write: boolean;
+}
+
+export interface StorageUsage {
+  private: { used_bytes: number; limit_bytes: number };
+  shared: { enabled: boolean; used_bytes: number };
+  disk?: { total: number; used: number; free: number };
+  users?: { user_id: number; username: string; used_bytes: number }[];
+}
+
+export interface Capabilities {
+  inspect: boolean;
+  download: boolean;
+  resume: boolean;
+  anonymous: boolean;
+  credentials: boolean;
+  requires_credentials: boolean;
+  folders: boolean;
+  checksum: boolean;
+  waits: boolean;
+  captcha: boolean;
+}
+
+export interface CredentialField {
+  name: string;
+  label: string;
+  kind: "text" | "password" | "textarea";
+  required: boolean;
+  help: string;
+}
+
+export interface Provider {
+  id: string;
+  name: string;
+  description: string;
+  homepage: string;
+  capabilities: Capabilities;
+  notes: string[];
+  verification: string;
+  enabled: boolean;
+  configured: boolean;
+  ready: boolean;
+  // Administrators only:
+  credential_fields?: CredentialField[];
+  health?: "ok" | "error" | "unknown";
+  health_message?: string;
+  checked_at?: string | null;
+  credential_fields_set?: string[];
+  credentials_updated_at?: string | null;
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  message: string;
+  account: Record<string, unknown>;
+}
+
+export interface ProviderError {
+  id: number;
+  created_at: string;
+  level: string;
+  action: string;
+  message: string;
+  username: string;
+  code: string;
+}
+
+export interface ActivityItem {
+  id: number;
+  created_at: string;
+  category: string;
+  action: string;
+  level: "info" | "warning" | "error";
+  message: string;
+  target: string;
+  username: string;
+  ip_address: string;
+}
+
+export interface AdminUser extends User {
+  quota: QuotaLimits;
+  storage_bytes: number;
+  open_downloads: number;
+  total_downloads: number;
+  active_sessions: number;
+}
+
+export interface Invitation {
+  id: number;
+  role: Role;
+  note: string;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  revoked: boolean;
+  status: "active" | "used" | "revoked" | "expired";
+}
+
+export interface CreatedInvitation extends Invitation {
+  token: string;
+  path: string;
+  url: string;
+}
+
+export interface SessionInfo {
+  id: number;
+  user_id: number;
+  username: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  ip_address: string;
+  user_agent: string;
+  current: boolean;
+}
+
+export interface AppSettings {
+  general: {
+    app_name: string;
+    theme: ThemeChoice;
+    language: string;
+    default_destination: "private" | "shared";
+    check_for_updates: boolean;
+  };
+  downloads: {
+    max_global_concurrent: number;
+    max_per_user_concurrent: number;
+    retry_count: number;
+    retry_delay_seconds: number;
+    default_priority: number;
+    use_aria2: boolean;
+    aria2_path: string;
+    aria2_min_size_mb: number;
+    aria2_connections: number;
+  };
+  storage: {
+    storage_root: string;
+    max_storage_gb: number;
+    temp_cleanup_hours: number;
+    auto_delete_days: number;
+    history_retention_days: number;
+    shared_enabled: boolean;
+    users_can_write_shared: boolean;
+  };
+  network: {
+    bind_address: string;
+    port: number;
+    trusted_proxies: string[];
+    cors_origins: string[];
+    public_url: string;
+  };
+  security: {
+    session_hours: number;
+    invitations_required: boolean;
+    invitation_expiry_hours: number;
+    password_min_length: number;
+    password_require_mixed: boolean;
+    login_max_attempts: number;
+    login_window_minutes: number;
+    login_lockout_minutes: number;
+  };
+  quota_defaults: {
+    max_concurrent: number;
+    max_storage_gb: number;
+    max_file_gb: number;
+    daily_downloads: number;
+    bandwidth_kbps: number;
+    max_queued: number;
+  };
+}
+
+export interface SettingsPayload {
+  settings: AppSettings;
+  effective: {
+    bind_address: string;
+    port: number;
+    storage_root: string;
+    active_storage_root: string;
+    config_file: string;
+  };
+  restart_required: string[];
+  changed?: string[];
+}
+
+export interface HealthCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+  optional?: boolean;
+}
+
+export interface Health {
+  status: "ok" | "degraded";
+  checks: HealthCheck[];
+  version: string;
+  python: string;
+  platform: string;
+  uptime_seconds: number;
+  listening: { bind_address: string; port: number };
+  manager: { running: boolean; active_jobs: number; transferring: number; aggregate_speed_bps: number };
+  downloads: Partial<Record<DownloadState, number>>;
+  disk: { total: number; used: number; free: number };
+  storage_used_bytes: number;
+  realtime_clients: number;
+  guard_proxy_denied: number;
+  restart_required: string[];
+}
+
+export interface UpdateRun {
+  state: "running" | "succeeded" | "failed" | "cancelled" | string;
+  message: string;
+  from_version: string;
+  to_version: string;
+  started_at: string;
+  finished_at: string;
+}
+
+export interface UpdateStatus {
+  current_version: string;
+  repository: string;
+  auto_check: boolean;
+  checked_at: string | null;
+  error: string;
+  latest_version: string | null;
+  update_available: boolean;
+  release_name: string;
+  notes: string;
+  published_at: string | null;
+  release_url: string;
+  package_available: boolean;
+  can_apply: boolean;
+  apply_blocker: string;
+  source: "git" | "release" | "exe";
+  in_progress: boolean;
+  last_run: UpdateRun | null;
+}
+
+export interface LogEntry {
+  ts: string;
+  level: string;
+  logger: string;
+  message: string;
+  [key: string]: unknown;
+}
+
+export interface ServerEvent {
+  type: string;
+  data: Record<string, unknown>;
+}
