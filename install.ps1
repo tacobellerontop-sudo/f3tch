@@ -19,10 +19,6 @@
 .PARAMETER Port
     TCP port for the dashboard (default 8787). Only used on first install.
 
-.PARAMETER BindAddress
-    Address to listen on (default 127.0.0.1 = this computer only). Only used
-    on first install; change it later in Settings > Network.
-
 .PARAMETER RegisterStartup
     Start FETCH automatically when you sign in to Windows (a per-user
     scheduled task; no administrator rights needed).
@@ -50,7 +46,6 @@
 [CmdletBinding()]
 param(
     [ValidateRange(1024, 65535)][int]$Port = 8787,
-    [string]$BindAddress = '127.0.0.1',
     [switch]$RegisterStartup,
     [switch]$SkipAria2,
     [switch]$SkipFrontendBuild,
@@ -187,7 +182,7 @@ else {
 # -- Configuration and database --------------------------------------------------------
 Write-Step 'Preparing the configuration and the database'
 $firstInstall = -not (Test-Path $script:ConfigFile)
-$initOutput = Invoke-FetchCli @('init', '--bind', $BindAddress, '--port', "$Port")
+$initOutput = Invoke-FetchCli @('init', '--port', "$Port")
 if ($script:LastCliExit -ne 0) {
     Write-Host $initOutput
     Stop-WithError 'Initialising FETCH failed. See the output above.'
@@ -238,20 +233,6 @@ Write-Host 'FETCH is installed.' -ForegroundColor Green
 Write-Host ''
 Write-Host '  Start it:    .\start.ps1'
 Write-Host "  Dashboard:   $url"
-if ($status.setup_required) {
-    Write-Host ''
-    Write-Host '  First-time setup: the dashboard asks for this token to create the' -ForegroundColor White
-    Write-Host '  administrator account. It stops working once that account exists.' -ForegroundColor White
-    Write-Host ''
-    Write-Host "      $($status.setup_token)" -ForegroundColor Yellow
-}
 Write-Host ''
-if ($status.bind_address -eq '127.0.0.1') {
-    Write-Host '  FETCH listens on this computer only. To let friends in, see'
-    Write-Host '  "Remote access with Tailscale" in README.md.'
-}
-else {
-    Write-Host "  FETCH will listen on $($status.bind_address). Only expose it to networks you trust;" -ForegroundColor Yellow
-    Write-Host '  see "Remote access with Tailscale" in README.md.' -ForegroundColor Yellow
-}
+Write-Host '  FETCH only answers to this computer. There are no accounts to set up.'
 Write-Host ''
