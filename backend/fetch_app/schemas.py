@@ -106,6 +106,11 @@ class ReorderIn(BaseModel):
 # -- files ---------------------------------------------------------------------
 
 
+class RevealIn(BaseModel):
+    scope: Literal["private", "shared"] = "private"
+    path: str = Field("", max_length=1024)
+
+
 class FolderIn(BaseModel):
     scope: Literal["private", "shared"] = "private"
     path: str = Field("", max_length=1024)

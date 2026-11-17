@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 
 import { App } from "@/App";
-import type { ActivityItem, AdminUser, Bootstrap, Download, FileItem, Me, Provider, QuotaLimits } from "@/lib/types";
+import type { ActivityItem, Bootstrap, Download, FileItem, Provider } from "@/lib/types";
 
 export interface Call {
   method: string;
@@ -25,51 +25,25 @@ export class HttpFailure {
 
 const NOW = "2026-01-10T12:00:00Z";
 
-export const limits: QuotaLimits = {
-  max_concurrent: 2,
-  max_storage_bytes: 50 * 1024 ** 3,
-  max_file_bytes: 0,
-  daily_downloads: 0,
-  bandwidth_bps: 0,
-  max_queued: 100,
-};
-
 export const bootstrap: Bootstrap = {
   app_name: "FETCH",
   version: "1.0.0",
-  setup_required: false,
-  invitations_required: true,
   default_theme: "dark",
   language: "en",
-  password_min_length: 10,
-  password_require_mixed: false,
+  theme: "",
+  usage: {
+    storage_bytes: 1024 ** 3,
+    storage_limit_bytes: 50 * 1024 ** 3,
+    max_concurrent: 3,
+    active_downloads: 1,
+    open_downloads: 2,
+    downloads_today: 3,
+  },
 };
-
-export function makeMe(role: "admin" | "user" = "user", overrides: Partial<Me["user"]> = {}): Me {
-  return {
-    user: {
-      id: role === "admin" ? 1 : 2,
-      username: role === "admin" ? "alice" : "bob",
-      display_name: role === "admin" ? "Alice" : "Bob",
-      role,
-      is_active: true,
-      theme: "",
-      must_change_password: false,
-      created_at: NOW,
-      last_login_at: NOW,
-      ...overrides,
-    },
-    csrf_token: "csrf-test-token",
-    quota: { limits, usage: { storage_bytes: 1024 ** 3, active_downloads: 1, open_downloads: 2, downloads_today: 3 } },
-    session_expires_at: "2026-01-17T12:00:00Z",
-  };
-}
 
 export function makeDownload(overrides: Partial<Download> = {}): Download {
   return {
     id: 1,
-    user_id: 2,
-    owner: "bob",
     url: "https://files.example.com/ubuntu.iso",
     provider: "direct",
     filename: "ubuntu.iso",
@@ -109,8 +83,6 @@ export function makeFile(overrides: Partial<FileItem> = {}): FileItem {
     downloaded_at: NOW,
     provider: "direct",
     source_url: "https://files.example.com/ubuntu.iso",
-    owner: "",
-    can_delete: true,
     ...overrides,
   };
 }
@@ -134,39 +106,30 @@ export function makeProvider(overrides: Partial<Provider> = {}): Provider {
   };
 }
 
-export function makeAdminUser(overrides: Partial<AdminUser> = {}): AdminUser {
-  return {
-    ...makeMe("user").user,
-    quota: limits,
-    storage_bytes: 1024 ** 3,
-    open_downloads: 1,
-    total_downloads: 7,
-    active_sessions: 1,
-    ...overrides,
-  };
-}
-
 export function makeActivity(overrides: Partial<ActivityItem> = {}): ActivityItem {
   return {
     id: 1, created_at: NOW, category: "download", action: "download.completed", level: "info",
-    message: "Downloaded ubuntu.iso", target: "1", username: "bob", ip_address: "", ...overrides,
+    message: "Downloaded ubuntu.iso", target: "1", ...overrides,
   };
 }
 
 export const page = <T,>(items: T[]) => ({ items, total: items.length, page: 1, page_size: 50 });
 
-/** Answers shared by most tests for a signed-in session. */
-export function signedIn(me: Me, extra: Routes = {}): Routes {
+/** Answers shared by most tests: FETCH running, nothing special going on. */
+export function local(extra: Routes = {}): Routes {
   return {
     "GET /bootstrap": bootstrap,
-    "GET /auth/me": me,
     "GET /downloads": page<Download>([]),
     "GET /downloads/stats": { by_state: {}, active: 0, queued: 0, completed: 0, failed: 0, speed_bps: 0 },
     "GET /activity": page<ActivityItem>([]),
-    "GET /files/usage": { private: { used_bytes: 1024 ** 3, limit_bytes: 50 * 1024 ** 3 }, shared: { enabled: true, used_bytes: 0 } },
+    "GET /files/usage": {
+      private: { used_bytes: 1024 ** 3, limit_bytes: 50 * 1024 ** 3 },
+      shared: { used_bytes: 0 },
+      disk: { total: 500 * 1024 ** 3, used: 200 * 1024 ** 3, free: 300 * 1024 ** 3 },
+    },
     "GET /providers": [makeProvider()],
-    "GET /users": [],
-    "GET /settings": new HttpFailure(403, "forbidden", "Administrator access is required."),
+    "GET /settings": new HttpFailure(404, "not_found", "No test settings."),
+    "GET /admin/update": new HttpFailure(404, "not_found", "No test update status."),
     ...extra,
   };
 }

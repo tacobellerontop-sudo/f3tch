@@ -1,12 +1,12 @@
 import { ArrowDownToLine, CheckCircle2, Clock, Gauge, HardDrive, Plus, XCircle } from "lucide-react";
-import { memo, useState, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { DownloadActions } from "@/components/downloads/actions";
 import { DownloadProgress, ProviderTag, StateBadge, useLive, WaitNote } from "@/components/downloads/parts";
 import { useAddDownload } from "@/components/layout/AppShell";
-import { Button, Card, EmptyState, PageHeader, PageLoader, ProgressBar, Segmented } from "@/components/ui";
-import { useMe } from "@/lib/auth";
+import { Button, Card, EmptyState, PageHeader, PageLoader, ProgressBar } from "@/components/ui";
+import { useBootstrap } from "@/lib/app";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, formatRelative, formatSpeed } from "@/lib/format";
 import { useSpeedSum } from "@/lib/progress";
@@ -28,7 +28,7 @@ function Stat({ label, value, icon, to, tone }: { label: string; value: ReactNod
   return to ? <Link to={to} className="block rounded-lg">{body}</Link> : body;
 }
 
-const ActiveCard = memo(function ActiveCard({ download, currentUserId, showOwner }: { download: Download; currentUserId: number; showOwner: boolean }) {
+const ActiveCard = memo(function ActiveCard({ download }: { download: Download }) {
   const live = useLive(download);
   return (
     <Card className="p-4">
@@ -39,10 +39,9 @@ const ActiveCard = memo(function ActiveCard({ download, currentUserId, showOwner
           </p>
           <div className="mt-1 flex items-center gap-3">
             <ProviderTag id={download.provider} />
-            {showOwner && <span className="truncate text-xs text-subtle">{download.owner}</span>}
           </div>
         </div>
-        <DownloadActions download={download} currentUserId={currentUserId} />
+        <DownloadActions download={download} />
       </div>
       <div className="mt-4">
         <DownloadProgress download={download} live={live} />
@@ -65,7 +64,7 @@ const ActiveCard = memo(function ActiveCard({ download, currentUserId, showOwner
 
 const LEVEL_DOT: Record<ActivityItem["level"], string> = { info: "bg-subtle", warning: "bg-warning", error: "bg-danger" };
 
-export function ActivityList({ items, showUser }: { items: ActivityItem[]; showUser: boolean }) {
+export function ActivityList({ items }: { items: ActivityItem[] }) {
   return (
     <ul className="divide-y divide-line">
       {items.map((item) => (
@@ -73,10 +72,7 @@ export function ActivityList({ items, showUser }: { items: ActivityItem[]; showU
           <span className={cn("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full", LEVEL_DOT[item.level])} />
           <div className="min-w-0 flex-1">
             <p className="break-words text-[13px] leading-5 text-fg">{item.message}</p>
-            <p className="text-2xs text-subtle">
-              {showUser && item.username ? `${item.username} · ` : ""}
-              {item.category}
-            </p>
+            <p className="text-2xs text-subtle">{item.category}</p>
           </div>
           <time className="tabular shrink-0 pt-0.5 text-2xs text-subtle" dateTime={item.created_at} title={new Date(item.created_at).toLocaleString()}>
             {formatRelative(item.created_at)}
@@ -88,37 +84,30 @@ export function ActivityList({ items, showUser }: { items: ActivityItem[]; showU
 }
 
 export function OverviewPage() {
-  const me = useMe();
+  const { usage: figures } = useBootstrap();
   const openAdd = useAddDownload();
-  const isAdmin = me.user.role === "admin";
-  const [scope, setScope] = useState<"me" | "all">(isAdmin ? "all" : "me");
-  const owner = scope === "all" ? "" : "me";
 
-  const stats = useDownloadStats(scope);
-  const active = useDownloads({ state: ACTIVE_STATES, sort: "created_at", order: "asc", page_size: 24, owner });
-  const activity = useActivity({ page_size: 8, scope });
+  const stats = useDownloadStats();
+  const active = useDownloads({ state: ACTIVE_STATES, sort: "created_at", order: "asc", page_size: 24 });
+  const activity = useActivity({ page_size: 8 });
   const usage = useStorageUsage();
   const items = active.data?.items ?? [];
   const speed = useSpeedSum(items);
 
-  const used = usage.data?.private.used_bytes ?? me.quota.usage.storage_bytes;
-  const limit = usage.data?.private.limit_bytes ?? me.quota.limits.max_storage_bytes;
+  const used = usage.data?.private.used_bytes ?? figures.storage_bytes;
+  const limit = usage.data?.private.limit_bytes ?? figures.storage_limit_bytes;
+  const shared = usage.data?.shared.used_bytes ?? 0;
   const disk = usage.data?.disk;
 
   return (
     <>
       <PageHeader
         title="Overview"
-        description={`Signed in as ${me.user.display_name || me.user.username}.`}
+        description="What FETCH is doing on this computer."
         actions={
-          <>
-            {isAdmin && (
-              <Segmented label="Scope" value={scope} onChange={setScope} options={[{ value: "all", label: "Everyone" }, { value: "me", label: "Mine" }]} />
-            )}
-            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openAdd()}>
-              Add download
-            </Button>
-          </>
+          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openAdd()}>
+            Add download
+          </Button>
         }
       />
 
@@ -152,7 +141,7 @@ export function OverviewPage() {
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               {items.map((download) => (
-                <ActiveCard key={download.id} download={download} currentUserId={me.user.id} showOwner={scope === "all"} />
+                <ActiveCard key={download.id} download={download} />
               ))}
             </div>
           )}
@@ -164,35 +153,32 @@ export function OverviewPage() {
             <Card className="space-y-4 p-4">
               <div>
                 <div className="mb-2 flex items-baseline justify-between">
-                  <span className="flex items-center gap-2 text-xs text-muted"><HardDrive className="h-3.5 w-3.5 text-subtle" />My files</span>
+                  <span className="flex items-center gap-2 text-xs text-muted"><HardDrive className="h-3.5 w-3.5 text-subtle" />Downloaded files</span>
                   <span className="tabular text-xs text-fg">
                     {formatBytes(used)}
                     <span className="text-subtle">{limit > 0 ? ` of ${formatBytes(limit, 0)}` : " · no limit"}</span>
                   </span>
                 </div>
-                <ProgressBar value={limit > 0 ? Math.min(100, (used / limit) * 100) : 0} label="My storage used" tone={limit > 0 && used / limit > 0.9 ? "danger" : "accent"} />
+                <ProgressBar value={limit > 0 ? Math.min(100, (used / limit) * 100) : 0} label="Storage used" tone={limit > 0 && used / limit > 0.9 ? "danger" : "accent"} />
               </div>
-              {usage.data?.shared.enabled && (
+              {shared > 0 && (
                 <div className="flex items-baseline justify-between text-xs">
                   <span className="text-muted">Shared folder</span>
-                  <span className="tabular text-fg">{formatBytes(usage.data.shared.used_bytes)}</span>
+                  <span className="tabular text-fg">{formatBytes(shared)}</span>
                 </div>
               )}
               {disk && disk.total > 0 && (
                 <div>
                   <div className="mb-2 flex items-baseline justify-between text-xs">
-                    <span className="text-muted">Server disk</span>
+                    <span className="text-muted">Disk</span>
                     <span className="tabular text-fg">{formatBytes(disk.free)} free<span className="text-subtle"> of {formatBytes(disk.total, 0)}</span></span>
                   </div>
-                  <ProgressBar value={(disk.used / disk.total) * 100} tone={disk.used / disk.total > 0.9 ? "danger" : "neutral"} label="Server disk used" />
+                  <ProgressBar value={(disk.used / disk.total) * 100} tone={disk.used / disk.total > 0.9 ? "danger" : "neutral"} label="Disk used" />
                 </div>
               )}
               <div className="tabular flex items-center justify-between border-t border-line pt-3 text-xs text-muted">
                 <span>Downloads in the last 24 h</span>
-                <span className="text-fg">
-                  {me.quota.usage.downloads_today}
-                  {me.quota.limits.daily_downloads > 0 ? ` / ${me.quota.limits.daily_downloads}` : ""}
-                </span>
+                <span className="text-fg">{figures.downloads_today}</span>
               </div>
             </Card>
           </section>
@@ -208,7 +194,7 @@ export function OverviewPage() {
               ) : (activity.data?.items.length ?? 0) === 0 ? (
                 <EmptyState title="No activity yet" />
               ) : (
-                <ActivityList items={activity.data!.items} showUser={scope === "all"} />
+                <ActivityList items={activity.data!.items} />
               )}
             </Card>
           </section>

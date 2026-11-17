@@ -5,7 +5,7 @@
 // slow refetch interval (see `useLiveInterval`).
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { progressStore } from "./progress";
 import type { Download, Page, Progress, ServerEvent } from "./types";
@@ -71,7 +71,7 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
     if (!known || type !== "download.updated") invalidate("downloads");
     if (download.state === "completed") {
       invalidate("files");
-      invalidate("me");
+      invalidate("bootstrap");
     }
     return;
   }
@@ -81,7 +81,7 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
       break;
     case "storage.changed":
       invalidate("files");
-      invalidate("me");
+      invalidate("bootstrap");
       break;
     case "activity":
       invalidate("activity");
@@ -89,16 +89,9 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
     case "settings.changed":
       invalidate("bootstrap");
       invalidate("settings");
-      invalidate("me");
       break;
     case "providers.changed":
       invalidate("providers");
-      break;
-    case "users.changed":
-      invalidate("users");
-      break;
-    case "quota.changed":
-      invalidate("me");
       break;
     default:
       break;
@@ -107,15 +100,12 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
 
 interface Props {
   enabled: boolean;
-  onSessionEnded: () => void;
   children: ReactNode;
 }
 
-export function RealtimeProvider({ enabled, onSessionEnded, children }: Props) {
+export function RealtimeProvider({ enabled, children }: Props) {
   const client = useQueryClient();
   const [status, setStatus] = useState<ConnectionStatus>(enabled ? "connecting" : "offline");
-  const sessionEnded = useRef(onSessionEnded);
-  sessionEnded.current = onSessionEnded;
 
   useEffect(() => {
     if (!enabled) {
@@ -164,15 +154,10 @@ export function RealtimeProvider({ enabled, onSessionEnded, children }: Props) {
         if (event.type === "ping" || event.type === "hello") return;
         applyServerEvent(client, event, invalidate);
       };
-      socket.onclose = (event) => {
+      socket.onclose = () => {
         socket = null;
         if (closed) return;
         progressStore.reset();
-        if (event.code === 4401) {
-          setStatus("offline");
-          sessionEnded.current();
-          return;
-        }
         attempt += 1;
         setStatus(attempt > 3 ? "offline" : "reconnecting");
         const delay = Math.min(30_000, 500 * 2 ** Math.min(attempt, 6)) + Math.random() * 400;

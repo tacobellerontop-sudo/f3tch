@@ -1,8 +1,12 @@
-"""File manager: browse, search, download (streamed), create folders, delete."""
+"""File manager: browse, search, download (streamed), show in the computer's
+file manager, create folders, delete."""
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
@@ -10,7 +14,7 @@ from fastapi.responses import FileResponse
 
 from ..models import FileRecord, User
 from ..settings_service import GB
-from ..schemas import FolderIn
+from ..schemas import FolderIn, RevealIn
 from ..storage import StorageError, clean_rel_path
 from .deps import ApiError, Ctx, CurrentUser, Db, client_ip
 
@@ -148,6 +152,40 @@ def download_file(
         content_disposition_type="attachment",
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"},
     )
+
+
+def open_in_file_manager(target: Path) -> None:
+    """Show `target` in the computer's file manager: a file is selected in its
+    folder, a folder is opened. Never runs or opens the file itself.
+    Tests replace this function."""
+    if sys.platform == "win32":
+        if target.is_dir():
+            subprocess.Popen(["explorer.exe", str(target)])  # noqa: S603, S607
+        else:
+            subprocess.Popen(["explorer.exe", "/select,", str(target)])  # noqa: S603, S607
+    elif sys.platform == "darwin":
+        args = ["open", str(target)] if target.is_dir() else ["open", "-R", str(target)]
+        subprocess.Popen(args)  # noqa: S603, S607
+    else:
+        folder = target if target.is_dir() else target.parent
+        subprocess.Popen(["xdg-open", str(folder)], start_new_session=True)  # noqa: S603, S607
+
+
+@router.post("/reveal")
+def reveal(body: RevealIn, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
+    space = _space(user, body.scope)
+    try:
+        target = ctx.storage.resolve(body.scope, space, body.path)
+    except StorageError as exc:
+        raise ApiError(404, "not_found", "File not found.") from exc
+    db.commit()
+    if not target.exists() or target.is_symlink():
+        raise ApiError(404, "not_found", "File not found.")
+    try:
+        open_in_file_manager(target)
+    except OSError as exc:
+        raise ApiError(409, "reveal_failed", f"Could not open the file manager: {exc}") from exc
+    return {"ok": True}
 
 
 @router.post("/folder", status_code=201)

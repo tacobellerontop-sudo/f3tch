@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 
 import { progressStore } from "@/lib/progress";
 
-import { makeActivity, makeDownload, makeMe, page, renderApp, signedIn } from "./harness";
+import { HttpFailure, local, makeActivity, makeDownload, page, renderApp } from "./harness";
 
 const stats = { by_state: {}, active: 1, queued: 4, completed: 12, failed: 2, speed_bps: 0 };
 
 describe("overview", () => {
   it("renders statistics, active downloads, storage and activity from the API", async () => {
-    renderApp("/", signedIn(makeMe("user"), {
+    renderApp("/", local({
       "GET /downloads/stats": stats,
       "GET /downloads": page([makeDownload()]),
       "GET /activity": page([makeActivity()]),
@@ -28,7 +28,7 @@ describe("overview", () => {
   });
 
   it("updates progress from live events without refetching", async () => {
-    const { server } = renderApp("/", signedIn(makeMe("user"), {
+    const { server } = renderApp("/", local({
       "GET /downloads/stats": stats,
       "GET /downloads": page([makeDownload()]),
     }));
@@ -46,23 +46,35 @@ describe("overview", () => {
   });
 
   it("shows an empty state with a way to add a download", async () => {
-    renderApp("/", signedIn(makeMe("user")));
+    renderApp("/", local());
     const main = within(await screen.findByRole("main"));
     expect(await main.findByText("Nothing is downloading")).toBeInTheDocument();
     expect(main.getAllByRole("button", { name: "Add download" }).length).toBeGreaterThan(0);
   });
 
-  it("hides administration from regular users and shows it to administrators", async () => {
-    const first = renderApp("/", signedIn(makeMe("user")));
+  it("has no sign-in, accounts or user administration", async () => {
+    const { server } = renderApp("/", local());
     const nav = within((await screen.findAllByRole("navigation", { name: "Main" }))[0]);
     expect(nav.getByRole("link", { name: "Downloads" })).toBeInTheDocument();
+    expect(nav.getByRole("link", { name: "Settings" })).toBeInTheDocument();
     expect(nav.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Account menu" })).not.toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "Scope" })).not.toBeInTheDocument();
-    first.unmount();
+    expect(screen.queryByText(/sign/i)).not.toBeInTheDocument();
+    expect(server.calls.some((call) => call.path.startsWith("/auth"))).toBe(false);
+  });
 
-    renderApp("/", signedIn(makeMe("admin")));
-    const adminNav = within((await screen.findAllByRole("navigation", { name: "Main" }))[0]);
-    expect(adminNav.getByRole("link", { name: "Users" })).toBeInTheDocument();
-    expect(await screen.findByRole("radiogroup", { name: "Scope" })).toBeInTheDocument();
+  it("sends links from versions with accounts to the overview", async () => {
+    for (const path of ["/login", "/setup", "/invite/abc", "/users"]) {
+      const view = renderApp(path, local());
+      expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+      expect(window.location.pathname).toBe("/");
+      view.unmount();
+    }
+  });
+
+  it("explains a server that cannot be reached", async () => {
+    renderApp("/", local({ "GET /bootstrap": new HttpFailure(502, "bad_gateway", "Down.") }));
+    expect(await screen.findByText("Cannot reach the FETCH server", {}, { timeout: 5000 })).toBeInTheDocument();
   });
 });

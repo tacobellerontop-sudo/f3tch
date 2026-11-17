@@ -30,10 +30,9 @@ import {
   useToast,
 } from "@/components/ui";
 import { errorMessage } from "@/lib/api";
-import { useMe } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, formatRelative } from "@/lib/format";
-import { useBulkAction, useDownloads, useProviders, useUsers } from "@/lib/queries";
+import { useBulkAction, useDownloads, useProviders } from "@/lib/queries";
 import type { Download, DownloadAction } from "@/lib/types";
 
 const PAGE_SIZE = 50;
@@ -53,13 +52,11 @@ function useDebounced<T>(value: T, delay = 250): T {
 interface RowProps {
   download: Download;
   selected: boolean;
-  showOwner: boolean;
-  currentUserId: number;
   onToggle: (id: number) => void;
   onOpen: (id: number) => void;
 }
 
-const Row = memo(function Row({ download, selected, showOwner, currentUserId, onToggle, onOpen }: RowProps) {
+const Row = memo(function Row({ download, selected, onToggle, onOpen }: RowProps) {
   const live = useLive(download);
   const name = download.filename || download.url;
   return (
@@ -87,7 +84,6 @@ const Row = memo(function Row({ download, selected, showOwner, currentUserId, on
         </button>
         <div className="mt-0.5 flex items-center gap-3 text-xs text-subtle">
           <ProviderTag id={download.provider} className="md:hidden" />
-          {showOwner && <span className="truncate">{download.owner}</span>}
           {download.state === "failed" && download.error_message && (
             <span className="truncate text-danger" title={download.error_message}>
               {download.error_message}
@@ -124,22 +120,19 @@ const Row = memo(function Row({ download, selected, showOwner, currentUserId, on
         {formatRelative(download.created_at)}
       </td>
       <td className="w-20 py-2.5 pr-3">
-        <DownloadActions download={download} currentUserId={currentUserId} />
+        <DownloadActions download={download} />
       </td>
     </tr>
   );
 });
 
 export function DownloadsPage() {
-  const me = useMe();
   const toast = useToast();
   const openAdd = useAddDownload();
-  const isAdmin = me.user.role === "admin";
   const [params, setParams] = useSearchParams();
 
   const state = params.get("state") ?? "";
   const provider = params.get("provider") ?? "";
-  const owner = params.get("owner") ?? (isAdmin ? "" : "me");
   const sort = (params.get("sort") as SortKey | null) ?? "created_at";
   const order = params.get("order") === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number(params.get("page")) || 1);
@@ -169,15 +162,12 @@ export function DownloadsPage() {
     q,
     sort,
     order,
-    owner: isAdmin ? owner : "me",
   });
   const providers = useProviders();
-  const users = useUsers(isAdmin);
   const bulk = useBulkAction();
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
   const total = list.data?.total ?? 0;
-  const showOwner = isAdmin && owner !== "me";
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [openId, setOpenId] = useState<number | null>(null);
@@ -246,7 +236,7 @@ export function DownloadsPage() {
     </th>
   );
 
-  const filtered = Boolean(state || provider || q || (isAdmin && owner));
+  const filtered = Boolean(state || provider || q);
   const openDownload = items.find((item) => item.id === openId) ?? null;
 
   return (
@@ -290,19 +280,6 @@ export function DownloadsPage() {
             </option>
           ))}
         </Select>
-        {isAdmin && (
-          <Select aria-label="Filter by user" value={owner} onChange={(event) => update({ owner: event.target.value })}>
-            <option value="">Everyone</option>
-            <option value="me">Mine</option>
-            {(users.data ?? [])
-              .filter((user) => user.id !== me.user.id)
-              .map((user) => (
-                <option key={user.id} value={String(user.id)}>
-                  {user.username}
-                </option>
-              ))}
-          </Select>
-        )}
         {filtered && (
           <Button
             variant="ghost"
@@ -395,8 +372,7 @@ export function DownloadsPage() {
                     key={download.id}
                     download={download}
                     selected={selected.has(download.id)}
-                    showOwner={showOwner}
-                    currentUserId={me.user.id}
+                   
                     onToggle={toggle}
                     onOpen={setOpenId}
                   />
@@ -410,7 +386,7 @@ export function DownloadsPage() {
         )}
       </Card>
 
-      <DownloadDetails download={openDownload} currentUserId={me.user.id} showOwner={isAdmin} onClose={() => setOpenId(null)} />
+      <DownloadDetails download={openDownload} onClose={() => setOpenId(null)} />
 
       <ConfirmDialog
         open={confirmRemove}

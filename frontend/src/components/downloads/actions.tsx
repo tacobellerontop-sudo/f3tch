@@ -17,22 +17,22 @@ export function canDo(action: DownloadAction, state: DownloadState): boolean {
   return CAN[action].includes(state);
 }
 
-export function filesLink(download: Download, isOwner: boolean): string {
+export function filesLink(download: Download): string {
   const folder = download.final_path.includes("/") ? download.final_path.slice(0, download.final_path.lastIndexOf("/")) : "";
-  const params = new URLSearchParams({ scope: download.destination });
+  const params = new URLSearchParams();
+  if (download.destination === "shared") params.set("scope", "shared");
   if (folder) params.set("path", folder);
-  if (download.destination === "private" && !isOwner) params.set("owner", String(download.user_id));
-  return `/files?${params.toString()}`;
+  const query = params.toString();
+  return query ? `/files?${query}` : "/files";
 }
 
 interface Props {
   download: Download;
-  currentUserId: number;
   /** Show the primary action as an inline icon button. */
   inline?: boolean;
 }
 
-export function DownloadActions({ download, currentUserId, inline = true }: Props) {
+export function DownloadActions({ download, inline = true }: Props) {
   const toast = useToast();
   const navigate = useNavigate();
   const action = useDownloadAction();
@@ -61,7 +61,7 @@ export function DownloadActions({ download, currentUserId, inline = true }: Prop
     items.push({
       label: "Open containing folder",
       icon: <FolderOpen />,
-      onSelect: () => navigate(filesLink(download, download.user_id === currentUserId)),
+      onSelect: () => navigate(filesLink(download)),
     });
   }
   items.push({ label: "Copy download URL", icon: <Copy />, onSelect: () => void copyUrl(), separatorBefore: items.length > 0 });

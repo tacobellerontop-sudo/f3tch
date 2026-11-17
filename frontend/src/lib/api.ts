@@ -1,4 +1,4 @@
-// Thin fetch wrapper: same-origin cookies, CSRF header, uniform errors.
+// Thin fetch wrapper with uniform errors. FETCH is local and has no sign-in.
 
 export class ApiError extends Error {
   status: number;
@@ -10,17 +10,6 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
-}
-
-let csrfToken = "";
-let onUnauthorized: (() => void) | null = null;
-
-export function setCsrfToken(token: string): void {
-  csrfToken = token;
-}
-
-export function setUnauthorizedHandler(handler: (() => void) | null): void {
-  onUnauthorized = handler;
 }
 
 type Query = Record<string, string | number | boolean | null | undefined>;
@@ -39,7 +28,6 @@ export function buildUrl(path: string, query?: Query): string {
 async function request<T>(method: string, path: string, options: { query?: Query; body?: unknown } = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
-  if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
 
   let response: Response;
   try {
@@ -64,13 +52,11 @@ async function request<T>(method: string, path: string, options: { query?: Query
   }
   if (!response.ok) {
     const error = (payload as { error?: { code?: string; message?: string } } | null)?.error;
-    const failure = new ApiError(
+    throw new ApiError(
       response.status,
       error?.code ?? "http_error",
       error?.message ?? `The server answered with an error (${response.status}).`,
     );
-    if (response.status === 401 && failure.code === "not_authenticated") onUnauthorized?.();
-    throw failure;
   }
   return payload as T;
 }

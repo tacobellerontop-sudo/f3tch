@@ -120,6 +120,21 @@ def test_paths_cannot_leave_the_storage_folder(populated):
     assert admin.get("/files/download", params={"path": "admin.bin"}).status_code == 200
 
 
+def test_reveal_shows_files_in_the_file_manager_without_leaving_storage(populated, monkeypatch):
+    from fetch_app.api import files
+
+    admin, _, _ = populated
+    shown = []
+    monkeypatch.setattr(files, "open_in_file_manager", shown.append)
+    assert admin.post("/files/reveal", json={"path": "admin.bin"}).json() == {"ok": True}
+    assert admin.post("/files/reveal", json={"path": ""}).status_code == 200
+    assert shown[0].name == "admin.bin" and shown[0].is_file()
+    assert shown[1].is_dir() and shown[1] == shown[0].parent
+    for attempt in ("../0/shared.bin", "/etc/passwd", "missing.bin"):
+        assert admin.post("/files/reveal", json={"path": attempt}).status_code == 404
+    assert len(shown) == 2
+
+
 def test_shared_folder_of_earlier_versions_stays_reachable(populated):
     admin, _, _ = populated
     listing = admin.get("/files", params={"scope": "shared"}).json()

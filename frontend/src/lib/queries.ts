@@ -7,18 +7,15 @@ import { api } from "./api";
 import { useLiveInterval } from "./realtime";
 import type {
   ActivityItem,
-  AdminUser,
   Download,
   DownloadAction,
   DownloadStats,
   FileListing,
   Health,
-  Invitation,
   LinkInfo,
   LogEntry,
   Page,
   Provider,
-  SessionInfo,
   SettingsPayload,
   StorageUsage,
   SubmitResult,
@@ -33,7 +30,6 @@ export interface DownloadListParams {
   q?: string;
   sort?: string;
   order?: "asc" | "desc";
-  owner?: string;
 }
 
 export function useDownloads(params: DownloadListParams, options: { enabled?: boolean } = {}) {
@@ -47,11 +43,11 @@ export function useDownloads(params: DownloadListParams, options: { enabled?: bo
   });
 }
 
-export function useDownloadStats(scope: "me" | "all") {
+export function useDownloadStats() {
   const refetchInterval = useLiveInterval();
   return useQuery({
-    queryKey: ["downloads", "stats", scope],
-    queryFn: () => api.get<DownloadStats>("/downloads/stats", { scope }),
+    queryKey: ["downloads", "stats"],
+    queryFn: () => api.get<DownloadStats>("/downloads/stats"),
     refetchInterval,
   });
 }
@@ -116,7 +112,7 @@ export function useSubmit() {
   return useMutation({
     mutationFn: (body: { urls: string[]; destination: string; folder: string; priority: number }) =>
       api.post<SubmitResult>("/downloads", body),
-    onSettled: () => invalidate("downloads", "me"),
+    onSettled: () => invalidate("downloads", "bootstrap"),
   });
 }
 
@@ -127,7 +123,6 @@ export interface FileListParams {
   type?: string;
   sort?: "name" | "size" | "modified";
   order?: "asc" | "desc";
-  owner_id?: number | null;
 }
 
 export function useFiles(params: FileListParams) {
@@ -151,7 +146,6 @@ export interface ActivityParams {
   page_size?: number;
   category?: string;
   level?: string;
-  scope?: "me" | "all";
   q?: string;
 }
 
@@ -163,24 +157,8 @@ export function useActivity(params: ActivityParams) {
   });
 }
 
-export function useUsers(enabled = true) {
-  return useQuery({ queryKey: ["users", "list"], queryFn: () => api.get<AdminUser[]>("/users"), enabled });
-}
-
-export function useInvitations() {
-  return useQuery({ queryKey: ["users", "invitations"], queryFn: () => api.get<Invitation[]>("/invitations") });
-}
-
-export function useAllSessions() {
-  return useQuery({ queryKey: ["users", "sessions"], queryFn: () => api.get<SessionInfo[]>("/admin/sessions") });
-}
-
-export function useMySessions() {
-  return useQuery({ queryKey: ["me", "sessions"], queryFn: () => api.get<SessionInfo[]>("/auth/sessions") });
-}
-
-export function useSettings(enabled = true) {
-  return useQuery({ queryKey: ["settings", "values"], queryFn: () => api.get<SettingsPayload>("/settings"), enabled });
+export function useSettings() {
+  return useQuery({ queryKey: ["settings", "values"], queryFn: () => api.get<SettingsPayload>("/settings") });
 }
 
 export function useHealth() {
@@ -199,12 +177,11 @@ export function useLogs(params: { level: string; q: string; limit: number }) {
   });
 }
 
-/** Update status for administrators. The server caches the GitHub answer. */
-export function useUpdateStatus(enabled = true) {
+/** Update status. The server caches the GitHub answer. */
+export function useUpdateStatus() {
   return useQuery({
     queryKey: ["settings", "update"],
     queryFn: () => api.get<UpdateStatus>("/admin/update"),
-    enabled,
     staleTime: 5 * 60_000,
     retry: false,
   });

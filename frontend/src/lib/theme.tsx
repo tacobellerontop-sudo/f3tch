@@ -34,7 +34,7 @@ function readStored(): ThemeChoice | null {
 }
 
 interface Props {
-  /** Preference saved on the account, if any. */
+  /** Preference saved by FETCH, if any. */
   accountChoice?: ThemeChoice | "";
   /** Instance-wide default from Settings. */
   defaultChoice?: ThemeChoice;

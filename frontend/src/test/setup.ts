@@ -3,7 +3,6 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
-import { setCsrfToken } from "@/lib/api";
 import { progressStore } from "@/lib/progress";
 
 /** The real-time socket is not under test here: it never connects. */
@@ -42,7 +41,6 @@ if (typeof window.matchMedia !== "function") {
 
 afterEach(() => {
   cleanup();
-  setCsrfToken("");
   IdleSocket.instances.length = 0;
   for (const id of [1, 2, 3, 4, 5]) progressStore.clear(id);
   window.localStorage.clear();
