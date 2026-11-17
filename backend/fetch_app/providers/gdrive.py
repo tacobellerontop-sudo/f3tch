@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from .base import (
+    AuthMode,
     Capabilities,
     CredentialField,
     ErrorCode,
@@ -53,6 +54,7 @@ class GoogleDriveProvider(ProviderAdapter):
     capabilities = Capabilities(
         anonymous=False, credentials=True, requires_credentials=True, checksum=True
     )
+    auth_modes = (AuthMode.ACCOUNT,)
     credential_fields = (
         CredentialField(
             "api_key",

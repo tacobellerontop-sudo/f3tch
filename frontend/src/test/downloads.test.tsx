@@ -174,6 +174,30 @@ describe("download controls", () => {
     expect(await screen.findByText("A completed download cannot be paused.")).toBeInTheDocument();
   });
 
+  it("lets the user complete a provider CAPTCHA themselves and sends exactly what they typed", async () => {
+    const waiting = makeDownload({
+      id: 9, filename: "archive.rar", provider: "rapidgator", state: "waiting", error_code: "captcha_required",
+      wait_reason: "Waiting for you to complete the provider's CAPTCHA.", wait_until: new Date(Date.now() + 300_000).toISOString(),
+    });
+    const { user, server } = renderApp("/downloads", signedIn(makeMe("user"), {
+      "GET /downloads": page([waiting]),
+      "GET /downloads/9/captcha": {
+        download_id: 9, provider: "rapidgator", kind: "image", prompt: "Type the characters from Rapidgator's picture.",
+        has_image: true, page_url: "https://rapidgator.net/file/abc", accepts_download_url: true, attempt: 1, expires_at: null,
+      },
+      "POST /downloads/9/captcha": { ...waiting, state: "queued" },
+    }));
+    await user.click(await screen.findByText("archive.rar"));
+    await user.click(await screen.findByRole("button", { name: "Complete CAPTCHA" }));
+    expect(await screen.findByText("Type the characters from Rapidgator's picture.")).toBeInTheDocument();
+    expect(screen.getByAltText("CAPTCHA picture from the provider")).toHaveAttribute("src", "/api/downloads/9/captcha/image?attempt=1");
+    expect(server.find("POST", "/downloads/9/captcha")).toHaveLength(0);
+    await user.type(screen.getByLabelText("Characters in the picture"), "k7xw2");
+    await user.click(screen.getByRole("button", { name: "Continue download" }));
+    await waitFor(() => expect(server.find("POST", "/downloads/9/captcha")).toHaveLength(1));
+    expect(server.find("POST", "/downloads/9/captcha")[0].body).toEqual({ answer: "k7xw2" });
+  });
+
   it("reorders the queue by sending the new order of that priority group", async () => {
     const queued = [
       makeDownload({ id: 1, filename: "first.bin", state: "queued", priority: 1 }),

@@ -21,6 +21,7 @@ def test_inspect_reports_metadata_without_queueing(admin, fileserver):
     assert items[0] | {"url": ""} == {
         "url": "", "provider": "direct", "provider_name": "Direct HTTP/HTTPS", "supported": True,
         "filename": "movie.mkv", "size": 12345, "resumable": True, "restriction": "", "message": "",
+        "premium_only": False, "auth_mode": "anonymous",
     }
     assert items[1]["supported"] is False and items[1]["restriction"] == "not_found"
     assert items[2]["supported"] is False and items[2]["restriction"] == "unsafe_url"

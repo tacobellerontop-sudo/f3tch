@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 
 import { App } from "@/App";
-import type { ActivityItem, AdminUser, Bootstrap, Download, FileItem, Me, Provider, QuotaLimits } from "@/lib/types";
+import type { ActivityItem, AdminUser, Bootstrap, Download, FileItem, Me, Provider, ProviderAuth, QuotaLimits } from "@/lib/types";
 
 export interface Call {
   method: string;
@@ -115,6 +115,24 @@ export function makeFile(overrides: Partial<FileItem> = {}): FileItem {
   };
 }
 
+export function makeAuth(overrides: Partial<ProviderAuth> = {}): ProviderAuth {
+  return {
+    modes: ["anonymous"],
+    authentication_required: false,
+    anonymous_available: true,
+    account_configured: false,
+    account_valid: null,
+    account_message: "",
+    preference: "auto",
+    effective_mode: "anonymous",
+    provider_available: true,
+    status: "anonymous",
+    problem_code: "",
+    message: "",
+    ...overrides,
+  };
+}
+
 export function makeProvider(overrides: Partial<Provider> = {}): Provider {
   return {
     id: "direct",
@@ -130,6 +148,7 @@ export function makeProvider(overrides: Partial<Provider> = {}): Provider {
     enabled: true,
     configured: false,
     ready: true,
+    auth: makeAuth(),
     ...overrides,
   };
 }

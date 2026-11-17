@@ -51,7 +51,8 @@ def test_every_provider_declares_capabilities_and_verification():
         assert described["id"] and described["name"] and described["verification"]
         assert set(described["capabilities"]) >= {"inspect", "download", "resume", "anonymous", "credentials"}
     by_id = {p.id: p for p in builtin_providers()}
-    assert by_id["rapidgator"].capabilities.requires_credentials
+    assert not by_id["rapidgator"].capabilities.requires_credentials
+    assert by_id["rapidgator"].capabilities.anonymous
     assert by_id["rapidgator"].capabilities.captcha
     assert by_id["gdrive"].capabilities.requires_credentials
     assert not by_id["mega"].capabilities.credentials
@@ -63,7 +64,8 @@ def test_provider_list_and_toggle(admin, user, fileserver):
     listed = {p["id"]: p for p in admin.get("/providers").json()}
     assert set(listed) == {"rapidgator", "mega", "pixeldrain", "gdrive", "direct"}
     assert listed["direct"]["ready"] is True
-    assert listed["rapidgator"]["ready"] is False and listed["gdrive"]["ready"] is False
+    assert listed["rapidgator"]["ready"] is True, "Rapidgator works without an account"
+    assert listed["gdrive"]["ready"] is False
     fileserver.add("a.bin", b"data")
     assert admin.patch("/providers/direct", json={"enabled": False}).json()["enabled"] is False
     result = user.submit(fileserver.url("file", "a.bin"))
@@ -78,7 +80,7 @@ def test_provider_list_and_toggle(admin, user, fileserver):
 @pytest.fixture
 def rapidgator(tmp_path):
     emulator = RapidgatorEmulator()
-    app = create_app(make_boot(tmp_path), providers=[RapidgatorProvider(emulator.api_url), DirectHttpProvider()])
+    app = create_app(make_boot(tmp_path), providers=[RapidgatorProvider(emulator.api_url, emulator.base), DirectHttpProvider()])
     with Api(app) as api:
         api.setup_admin()
         api.put("/settings", json={"downloads": {"retry_delay_seconds": 1}})
@@ -88,19 +90,6 @@ def rapidgator(tmp_path):
 
 def rg_url(name="archive.rar"):
     return f"https://rapidgator.net/file/{RG_FILE}/{name}.html"
-
-
-def test_rapidgator_without_account_reports_captcha_and_is_not_queued(rapidgator):
-    api, emulator = rapidgator
-    item = api.post("/downloads/inspect", json={"urls": [rg_url()]}).json()["items"][0]
-    assert item["provider"] == "rapidgator" and item["supported"] is False
-    assert item["restriction"] == "captcha_required" and "CAPTCHA" in item["message"]
-    assert item["filename"] == "archive.rar"
-    result = api.submit(rg_url())
-    assert result["created"] == [] and result["rejected"][0]["code"] == "captcha_required"
-    assert emulator.calls == [], "no request is made to Rapidgator without an account"
-    report = api.post("/providers/rapidgator/test").json()
-    assert report["ok"] is False and "CAPTCHA" in report["message"]
 
 
 def test_rapidgator_premium_account_downloads_through_the_api(rapidgator, tmp_path):
@@ -156,10 +145,10 @@ def test_rapidgator_free_account_is_reported_not_bypassed(rapidgator):
     assert report["ok"] is True and report["account"]["premium"] is False
     assert "not a Premium account" in report["message"]
     job = api.wait_state(api.submit(rg_url())["created"][0]["id"], "failed")
-    assert job["error_code"] == "captcha_required"
-    assert not any(c[1].startswith("/dl/") for c in emulator.calls), "no download was attempted"
-    errors = api.get("/providers/rapidgator/errors").json()
-    assert any(e["code"] == "captcha_required" for e in errors)
+    # A free account is refused by the API. That is reported as a Premium
+    # restriction, not as a missing account and not as a CAPTCHA.
+    assert job["error_code"] == "premium_only" and "Anonymous mode" in job["error_message"]
+    assert not any(c[1].startswith(("/dl/", "/download/")) for c in emulator.calls), "no download was attempted"
 
 
 def test_rapidgator_delay_is_waited_out(rapidgator):

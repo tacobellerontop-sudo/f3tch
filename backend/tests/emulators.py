@@ -12,6 +12,7 @@ import hashlib
 import json
 import struct
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -87,6 +88,21 @@ class RapidgatorEmulator(Emulator):
         self.delay = 0
         self.logins = 0
         self.traffic_exhausted = False
+        # Free-download website state.
+        self.free_seconds = 1
+        self.captcha_mode = "image"  # or "widget"
+        self.captcha_answer = "k7xw2"
+        self.captcha_serial = 0
+        self.captcha_posts: list[dict] = []
+        self.premium_only: set[str] = set()
+        self.display_sizes: dict[str, str] = {}
+        self.site_notice = ""
+        self.blocked = False
+        self.site_down = False
+        self.fids: dict[str, str] = {}
+        self.free: dict = {}
+        self.early_requests = 0
+        self.free_transfers = 0
 
     @property
     def api_url(self) -> str:
@@ -100,7 +116,106 @@ class RapidgatorEmulator(Emulator):
     def _fail(status, details):
         return 200, {}, {"response": None, "status": status, "details": details}
 
+    # -- the public website: file page and free-download steps ------------------
+    #
+    # Modelled on Rapidgator's free flow as publicly documented: file page ->
+    # AjaxStartTimer -> wait -> AjaxGetDownloadLink -> CAPTCHA -> address.
+    # The emulator refuses every step that arrives early or out of order, so a
+    # test passes only if FETCH really waited and really had a human answer.
+
+    PNG = b"\x89PNG\r\n\x1a\n" + b"fake-captcha-picture"
+
+    def _html(self, text, status=200, cookie=None):
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+        if cookie:
+            headers["Set-Cookie"] = cookie
+        return status, headers, text.encode()
+
+    def _file_page(self, file_id):
+        if self.blocked:
+            return self._html("<title>Just a moment...</title>", 403)
+        if self.site_down:
+            return self._html("<h1>503</h1>", 503)
+        file = self.files.get(file_id)
+        if file is None:
+            return self._html("<h3>404 File not found</h3>", 404)
+        name, data = file
+        notice = self.site_notice
+        if file_id in self.premium_only:
+            notice = "This file can be downloaded by premium only"
+        size = self.display_sizes.get(file_id, f"{len(data) / 1024:.2f} KB")
+        page = f"""<html><head><title>Download file {name}</title></head><body>
+            <div class="text-block file-descr"><p>Downloading:</p> <a href="/file/{file_id}">{name}</a>
+            <div>File size: <strong>{size}</strong></div></div>
+            <div class="error">{notice}</div>
+            <script>var startTimer = 1; var fid = {abs(hash(file_id)) % 100000 + 1};
+            var secs = {self.free_seconds}; var download_url = '/download/AjaxStartTimer';</script>
+            </body></html>"""
+        self.fids[str(abs(hash(file_id)) % 100000 + 1)] = file_id
+        return self._html(page, cookie="PHPSESSID=visitor-1; path=/")
+
+    def _captcha_page(self, wrong=False):
+        if self.captcha_mode == "widget":
+            return self._html('<form id="captchaform" method="post"><div class="g-recaptcha" '
+                              'data-sitekey="site-key"></div></form>')
+        self.captcha_serial += 1
+        note = "The verification code is incorrect." if wrong else ""
+        return self._html(f"""<p>{note}</p>
+            <form id="captchaform" action="/download/captcha" method="post">
+            <input type="hidden" name="DownloadCaptchaForm[captcha]" value="">
+            <input type="hidden" name="serial" value="{self.captcha_serial}">
+            <img src="/captcha/image?v={self.captcha_serial}" alt="captcha">
+            <input type="text" name="DownloadCaptchaForm[verifyCode]">
+            </form>""")
+
+    def _site(self, method, path, query, headers, body):
+        if path == "/":
+            return self._html("<html>Rapidgator</html>", 503 if self.site_down else 200)
+        if path.startswith("/file/"):
+            return self._file_page(path.split("/")[2])
+        if "PHPSESSID=visitor-1" not in (headers.get("Cookie") or ""):
+            return self._html("no session", 403)
+        if path == "/download/AjaxStartTimer":
+            file_id = self.fids.get(query.get("fid", ""))
+            if file_id is None:
+                return 200, {}, {"state": "error", "code": "wrong fid"}
+            self.free = {"file_id": file_id, "started": time.monotonic(), "stage": "timer"}
+            return 200, {}, {"state": "started", "sid": "sid-1"}
+        if path == "/download/AjaxGetDownloadLink":
+            if query.get("sid") != "sid-1" or self.free.get("stage") != "timer":
+                return 200, {}, {"state": "error", "code": "wrong sid"}
+            if time.monotonic() - self.free["started"] < self.free_seconds:
+                self.early_requests += 1
+                return 200, {}, {"state": "error", "code": "timer is not finished"}
+            self.free["stage"] = "captcha"
+            return 200, {}, {"state": "done"}
+        if path == "/captcha/image":
+            return 200, {"Content-Type": "image/png"}, self.PNG
+        if path == "/download/captcha":
+            if self.free.get("stage") != "captcha":
+                return self._html("out of order", 500)
+            if method == "GET":
+                return self._captcha_page()
+            form = {k: v[0] for k, v in parse_qs(body.decode(), keep_blank_values=True).items()}
+            self.captcha_posts.append(form)
+            if form.get("DownloadCaptchaForm[verifyCode]") != self.captcha_answer:
+                return self._captcha_page(wrong=True)
+            self.free["stage"] = "issued"
+            return self._html(f"<script>function getUrl() {{ return '{self.free_link(self.free['file_id'])}'; }}</script>")
+        return None
+
+    def free_link(self, file_id):
+        return f"{self.base}/download/free/{file_id}"
+
     def handle(self, method, path, query, headers, body):
+        if path.startswith("/download/free/"):
+            self.free_transfers += 1
+            name, data = self.files[path.split("/")[3]]
+            return 200, {}, data
+        if not path.startswith(("/api/", "/dl/")):
+            answer = self._site(method, path, query, headers, body)
+            if answer is not None:
+                return answer
         if path.startswith("/dl/"):
             name, data = self.files[path.split("/")[2]]
             return 200, {"X-Ranges": "1", "Accept-Ranges": "bytes"}, data

@@ -75,12 +75,15 @@ invents them.
 
 | Method and path | Purpose |
 |---|---|
-| `POST /api/downloads/inspect` | Body `{ urls: [...] }`. Detects the provider of each link and fetches name and size. Nothing is queued. Returns `{ items: [{ url, provider, provider_name, supported, filename, size, resumable, restriction, message }] }` |
+| `POST /api/downloads/inspect` | Body `{ urls: [...] }`. Detects the provider of each link and fetches name and size. Nothing is queued. Returns `{ items: [{ url, provider, provider_name, supported, filename, size, resumable, restriction, message, premium_only, auth_mode }] }` |
 | `POST /api/downloads` | Body `{ urls: [...], destination?: "private" \| "shared", folder?, priority?: 0-3 }` (up to 100 links). Returns `{ created: [download], rejected: [{ url, provider, code, message }] }` |
 | `GET /api/downloads` | Query: `page`, `page_size`, `state` (comma separated), `provider`, `q`, `sort` (`created_at`, `filename`, `size`, `state`, `provider`, `priority`, `progress`, `finished_at`, `position`, `queue`), `order`, and for administrators `owner` (`me` or a user id; empty for everyone) |
 | `GET /api/downloads/stats?scope=me\|all` | Counters by state and current speed (`all` is admin only) |
 | `GET /api/downloads/{id}` | One download |
 | `POST /api/downloads/{id}/pause` | Also `resume`, `cancel`, `retry`. `409 invalid_state` when the action does not apply |
+| `GET /api/downloads/{id}/captcha` | The provider CAPTCHA this download is waiting on (state `waiting`, `error_code` `captcha_required`): `{ kind: "image" \| "external", prompt, has_image, page_url, accepts_download_url, attempt, expires_at }`. `404 no_captcha` otherwise |
+| `GET /api/downloads/{id}/captcha/image` | The provider's CAPTCHA picture, for `kind: "image"` |
+| `POST /api/downloads/{id}/captcha` | Body `{ answer }` (what the user typed for a picture CAPTCHA) or `{ download_url }` (the address the provider issued after the user completed its steps in their own browser). FETCH passes it on unchanged and never produces an answer itself |
 | `PATCH /api/downloads/{id}` | Body `{ priority }`. Priority 3 (urgent) is admin only |
 | `DELETE /api/downloads/{id}?delete_file=true\|false` | Remove from history; a running job is stopped first |
 | `POST /api/downloads/bulk` | Body `{ ids, action: "pause"\|"resume"\|"cancel"\|"retry"\|"remove", delete_files? }`. Returns `{ done, skipped }` |
@@ -104,8 +107,9 @@ that folder; anything that would leave it is refused.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/providers` | Every provider with `capabilities`, `notes`, `verification`, `enabled`, `configured`, `ready`. Administrators also get `credential_fields`, the *names* of stored fields, and the last health result. Stored values are never returned |
+| `GET /api/providers` | Every provider with `capabilities`, `notes`, `verification`, `enabled`, `configured`, `ready`, `auth_modes` and `auth` (`modes`, `anonymous_available`, `authentication_required`, `account_configured`, `account_valid`, `preference`, `effective_mode`, `status`: `anonymous` \| `account` \| `auth_required` \| `unavailable`). Administrators also get `credential_fields`, the *names* of stored fields, and the last health result. Stored values are never returned |
 | `PATCH /api/providers/{id}` | *admin*. Body `{ enabled }` |
+| `PUT /api/providers/{id}/auth-mode` | *admin*. Body `{ mode: "auto" \| "anonymous" \| "account" }`. `422 invalid_mode` when the provider does not support it |
 | `PUT /api/providers/{id}/credentials` | *admin*. Body `{ values: { field: value } }`. Replaces the stored credentials |
 | `DELETE /api/providers/{id}/credentials` | *admin* |
 | `POST /api/providers/{id}/test` | *admin*. Returns `{ ok, message, account }` |

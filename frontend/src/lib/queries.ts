@@ -7,6 +7,7 @@ import { api } from "./api";
 import { useLiveInterval } from "./realtime";
 import type {
   ActivityItem,
+  CaptchaChallenge,
   AdminUser,
   Download,
   DownloadAction,
@@ -66,6 +67,29 @@ export function useDownloadAction() {
   return useMutation({
     mutationFn: ({ id, action }: { id: number; action: DownloadAction }) =>
       api.post<Download>(`/downloads/${id}/${action}`),
+    onSettled: () => invalidate("downloads"),
+  });
+}
+
+export function isAwaitingCaptcha(download: Pick<Download, "state" | "error_code">): boolean {
+  return download.state === "waiting" && download.error_code === "captcha_required";
+}
+
+export function useCaptcha(downloadId: number | null) {
+  return useQuery({
+    queryKey: ["downloads", "captcha", downloadId],
+    queryFn: () => api.get<CaptchaChallenge>(`/downloads/${downloadId}/captcha`),
+    enabled: downloadId !== null,
+    retry: false,
+    staleTime: 0,
+  });
+}
+
+export function useSubmitCaptcha() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: number; answer?: string; download_url?: string }) =>
+      api.post<Download>(`/downloads/${id}/captcha`, body),
     onSettled: () => invalidate("downloads"),
   });
 }
