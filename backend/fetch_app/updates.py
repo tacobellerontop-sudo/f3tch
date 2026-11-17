@@ -231,7 +231,9 @@ class UpdateService:
         env = dict(os.environ)
         # Let the new single-file executable unpack itself, not reuse our files.
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-        command = [str(exe), "run", "--no-browser", "--after-update", __version__]
+        command = [str(exe), "run", "--after-update", __version__]
+        if os.environ.get("FETCH_HEADLESS") == "1":
+            command.append("--headless")  # it was started without a window; keep it that way
         if os.name == "nt":
             flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)

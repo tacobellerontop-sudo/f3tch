@@ -11,19 +11,18 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
 from .activity import ActivityService
 from .api import admin as admin_api
-from .api import auth as auth_api
 from .api import downloads as downloads_api
 from .api import files as files_api
+from .api import profile as profile_api
 from .api import providers as providers_api
 from .api import ws as ws_api
-from .api.deps import ApiError
+from .api.deps import ApiError, is_local_request
 from .config import BootConfig, load_config
 from .context import AppContext
 from .db import Database, run_migrations
@@ -49,6 +48,32 @@ CSP = (
     "script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; "
     "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 )
+
+
+class LocalOnlyMiddleware:
+    """FETCH has no accounts, so it only talks to this computer.
+
+    It listens on 127.0.0.1 only; this also refuses requests that were relayed
+    here or that address FETCH by a name that is not this computer's. The
+    second case is how a web page elsewhere would try to reach a local program
+    (DNS rebinding).
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in ("http", "websocket") or is_local_request(scope):
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        response = JSONResponse(
+            {"error": {"code": "local_only", "message": "FETCH only answers to this computer."}},
+            status_code=403,
+        )
+        await response(scope, receive, send)
 
 
 def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = None) -> AppContext:
@@ -136,15 +161,7 @@ def create_app(boot: BootConfig | None = None, providers: list[ProviderAdapter] 
     )
     app.state.ctx = ctx
 
-    origins = ctx.settings.get().network.cors_origins
-    if origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=origins,
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-            allow_headers=["Content-Type", "X-CSRF-Token"],
-        )
+    app.add_middleware(LocalOnlyMiddleware)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -188,7 +205,7 @@ def create_app(boot: BootConfig | None = None, providers: list[ProviderAdapter] 
                   exc_info=(type(exc), exc, exc.__traceback__))
         return error(500, "internal_error", "Something went wrong on the server.")
 
-    for module in (auth_api, downloads_api, files_api, providers_api, admin_api, ws_api):
+    for module in (profile_api, downloads_api, files_api, providers_api, admin_api, ws_api):
         app.include_router(module.router, prefix="/api")
 
     @app.get("/api/health", include_in_schema=False)

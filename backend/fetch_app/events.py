@@ -1,9 +1,9 @@
-"""Real-time event bus with per-user authorization.
+"""Real-time event bus.
 
 Events are published from anywhere (including worker threads) and fanned out
-to WebSocket subscribers. Every event carries the id of the user it belongs
-to; a regular user only ever receives their own events and events addressed
-to everyone, administrators receive everything.
+to the WebSocket connections of the dashboard. The ``user_id`` and
+``audience`` arguments date from the versions with accounts; the one local
+profile receives every event.
 """
 
 from __future__ import annotations
@@ -62,16 +62,6 @@ class EventBus:
 
     def unsubscribe(self, sub: Subscriber) -> None:
         self._subscribers.discard(sub)
-
-    def disconnect_user(self, user_id: int, session_id: int | None = None) -> None:
-        """Close live connections of a user (optionally one session only)."""
-
-        def _close() -> None:
-            for sub in list(self._subscribers):
-                if sub.user_id == user_id and session_id in (None, sub.session_id):
-                    sub.closed.set()
-
-        self._call(_close)
 
     def publish(
         self,

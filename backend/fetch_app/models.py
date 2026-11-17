@@ -60,12 +60,19 @@ FINISHED_STATES = (DownloadState.COMPLETED, DownloadState.FAILED, DownloadState.
 
 
 class User(Base):
+    """The local profile. FETCH has no accounts; exactly one row is in use.
+
+    The table and its columns date from the multi-user versions and are kept so
+    that existing databases, downloads and files carry over unchanged.
+    """
+
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(128), default="")
-    password_hash: Mapped[str] = mapped_column(String(512))
+    # Unused since accounts were removed; the column stays so old databases load.
+    password_hash: Mapped[str] = mapped_column(String(512), default="")
     role: Mapped[str] = mapped_column(String(16), default=Role.USER.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     theme: Mapped[str] = mapped_column(String(16), default="")
@@ -73,70 +80,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    quota: Mapped[UserQuota | None] = relationship(
-        back_populates="user", uselist=False, cascade="all, delete-orphan"
-    )
-    sessions: Mapped[list[Session]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
-
     @property
     def is_admin(self) -> bool:
         return self.role == Role.ADMIN.value
-
-
-class Session(Base):
-    __tablename__ = "sessions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    # SHA-256 of the opaque cookie value; the raw token is never stored.
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    csrf_token: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    ip_address: Mapped[str] = mapped_column(String(64), default="")
-    user_agent: Mapped[str] = mapped_column(String(256), default="")
-
-    user: Mapped[User] = relationship(back_populates="sessions")
-
-
-class Invitation(Base):
-    __tablename__ = "invitations"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    role: Mapped[str] = mapped_column(String(16), default=Role.USER.value)
-    note: Mapped[str] = mapped_column(String(200), default="")
-    created_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    used_by_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
-
-
-class UserQuota(Base):
-    """Per-user limits. ``0`` always means "unlimited"."""
-
-    __tablename__ = "user_quotas"
-
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    max_concurrent: Mapped[int] = mapped_column(Integer, default=0)
-    max_storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
-    max_file_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
-    daily_downloads: Mapped[int] = mapped_column(Integer, default=0)
-    bandwidth_bps: Mapped[int] = mapped_column(BigInteger, default=0)
-    max_queued: Mapped[int] = mapped_column(Integer, default=0)
-
-    user: Mapped[User] = relationship(back_populates="quota")
 
 
 class Download(Base):

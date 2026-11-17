@@ -13,7 +13,6 @@ from ..context import AppContext
 from ..db import utcnow
 from ..models import OPEN_STATES, Download, DownloadState, FileRecord, User
 from ..providers.base import ErrorCode
-from ..quotas import QuotaError, check_submission
 from ..schemas import (
     BulkIn,
     DownloadPatchIn,
@@ -45,8 +44,7 @@ SORT_COLUMNS = {
 
 def _own(db: DbSession, user: User, job_id: int) -> Download:
     row = db.get(Download, job_id)
-    # A foreign id is indistinguishable from a missing one.
-    if row is None or (row.user_id != user.id and not user.is_admin):
+    if row is None:
         raise ApiError(404, "not_found", "Download not found.")
     return row
 
@@ -105,11 +103,6 @@ async def inspect(body: InspectIn, user: CurrentUser, ctx: Ctx) -> dict:
 async def submit(body: SubmitIn, request: Request, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
     settings = ctx.settings.get()
     destination = body.destination or settings.general.default_destination
-    if destination == "shared":
-        if not settings.storage.shared_enabled:
-            raise ApiError(403, "shared_disabled", "The shared folder is disabled.")
-        if not user.is_admin and not settings.storage.users_can_write_shared:
-            raise ApiError(403, "forbidden", "Only administrators can save to the shared folder.")
     try:
         folder = clean_rel_path(body.folder)
         ctx.storage.resolve(destination, user.id, folder)
@@ -125,18 +118,7 @@ async def submit(body: SubmitIn, request: Request, user: CurrentUser, ctx: Ctx, 
     ]
     created: list[Download] = []
     if accepted:
-        try:
-            check_submission(
-                db, user, settings, ctx.storage,
-                new_jobs=len(accepted),
-                known_sizes=[item["size"] for item in accepted if item["size"]],
-                destination=destination,
-            )
-        except QuotaError as exc:
-            raise ApiError(409, exc.code, exc.message) from exc
         priority = body.priority if body.priority is not None else settings.downloads.default_priority
-        if priority > 2 and not user.is_admin:
-            priority = 2  # "urgent" is reserved for administrators
         for item in accepted:
             row = Download(
                 user_id=user.id,
@@ -153,7 +135,7 @@ async def submit(body: SubmitIn, request: Request, user: CurrentUser, ctx: Ctx, 
             db.add(row)
             created.append(row)
         db.flush()
-        payload = [serialize_download(row, owner=user.username) for row in created]
+        payload = [serialize_download(row) for row in created]
         db.commit()
         for data in payload:
             ctx.bus.publish("download.added", {"download": data}, user_id=user.id)
@@ -182,13 +164,8 @@ def list_downloads(
     q: str = Query("", max_length=200),
     sort: str = Query("created_at"),
     order: Literal["asc", "desc"] = "desc",
-    owner: str = Query("", max_length=16),
 ) -> dict:
     query = db.query(Download)
-    if not user.is_admin or owner == "me":
-        query = query.filter(Download.user_id == user.id)
-    elif owner.isdigit():
-        query = query.filter(Download.user_id == int(owner))
     states = [s for s in state.split(",") if s]
     if states:
         valid = {s.value for s in S}
@@ -224,12 +201,8 @@ def list_downloads(
 
 
 @router.get("/stats")
-def stats(user: CurrentUser, ctx: Ctx, db: Db, scope: Literal["me", "all"] = "me") -> dict:
-    everyone = scope == "all" and user.is_admin
-    query = db.query(Download.state, func.count(Download.id))
-    if not everyone:
-        query = query.filter(Download.user_id == user.id)
-    counts = dict(query.group_by(Download.state).all())
+def stats(user: CurrentUser, ctx: Ctx, db: Db) -> dict:
+    counts = dict(db.query(Download.state, func.count(Download.id)).group_by(Download.state).all())
     by_state = {s.value: counts.get(s.value, 0) for s in S}
     return {
         "by_state": by_state,
@@ -237,7 +210,7 @@ def stats(user: CurrentUser, ctx: Ctx, db: Db, scope: Literal["me", "all"] = "me
         "queued": by_state["pending"] + by_state["queued"] + by_state["waiting"] + by_state["paused"],
         "completed": by_state["completed"],
         "failed": by_state["failed"],
-        "speed_bps": ctx.manager.aggregate_speed(None if everyone else user.id),
+        "speed_bps": ctx.manager.aggregate_speed(),
     }
 
 
@@ -271,8 +244,7 @@ _PAST = {"pause": "paused", "resume": "resumed", "cancel": "cancelled", "retry":
 @router.post("/bulk")
 async def bulk(body: BulkIn, request: Request, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
     rows = db.query(Download).filter(Download.id.in_(body.ids)).all()
-    allowed = [r for r in rows if r.user_id == user.id or user.is_admin]
-    states = {r.id: r.state for r in allowed}
+    states = {r.id: r.state for r in rows}
     db.commit()
     done: list[int] = []
     skipped: list[int] = [i for i in body.ids if i not in states]
@@ -299,18 +271,14 @@ async def bulk(body: BulkIn, request: Request, user: CurrentUser, ctx: Ctx, db: 
 
 @router.post("/reorder")
 def reorder(body: ReorderIn, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
-    """Reorder queued jobs. The given ids take over each other's positions.
-
-    A regular user can only permute their own jobs, so they can never move
-    ahead of somebody else's.
-    """
+    """Reorder queued jobs. The given ids take over each other's positions."""
     if len(set(body.ids)) != len(body.ids):
         raise ApiError(422, "invalid_order", "The list contains duplicates.")
     rows = db.query(Download).filter(Download.id.in_(body.ids)).all()
     by_id = {row.id: row for row in rows}
     for job_id in body.ids:
         row = by_id.get(job_id)
-        if row is None or (row.user_id != user.id and not user.is_admin):
+        if row is None:
             raise ApiError(404, "not_found", "Download not found.")
         if row.state not in QUEUE_STATES:
             raise ApiError(409, "not_queued", "Only queued downloads can be reordered.")
@@ -329,8 +297,6 @@ def reorder(body: ReorderIn, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
 @router.patch("/{job_id}")
 def update_download(job_id: int, body: DownloadPatchIn, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
     row = _own(db, user, job_id)
-    if body.priority > 2 and not user.is_admin:
-        raise ApiError(403, "forbidden", "Only administrators can set urgent priority.")
     row.priority = body.priority
     row.updated_at = utcnow()
     db.flush()

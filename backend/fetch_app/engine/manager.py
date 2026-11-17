@@ -1,7 +1,7 @@
 """FETCH's own job-management layer.
 
 The :class:`DownloadManager` owns the queue: it admits submitted jobs, decides
-what runs (global and per-user concurrency, priority, order), drives each job
+what runs (concurrency, priority, order), drives each job
 through its states, retries, waits out provider-imposed delays, and persists
 everything so the queue survives a restart. Transfer back-ends (native HTTP,
 aria2) and provider adapters are collaborators; none of them knows the queue.
@@ -15,7 +15,7 @@ import hashlib
 import logging
 import threading
 import time
-from collections import Counter, deque
+from collections import deque
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -33,11 +33,9 @@ from ..models import (
     Download,
     DownloadState,
     FileRecord,
-    User,
 )
 from ..providers.base import ErrorCode, ProviderError
 from ..providers.registry import ProviderRegistry
-from ..quotas import concurrency_limit, get_quota, reserved_bytes
 from ..schemas import serialize_download
 from ..settings_service import GB, SettingsService
 from ..storage import StorageError, StorageManager, sanitize_filename
@@ -121,7 +119,7 @@ class DownloadManager:
         self.activity = activity
         self.aria2 = aria2
         self._active: dict[int, JobHandle] = {}
-        self._limiters: dict[int, RateLimiter] = {}
+        self._limiter = RateLimiter()
         self._wake = asyncio.Event()
         # Serialises scheduling passes with pause/cancel/remove so a control
         # request can never slip between a job being picked and being tracked.
@@ -161,7 +159,7 @@ class DownloadManager:
                 loop.call_soon_threadsafe(self._wake.set)
 
     def publish_download(self, row: Download, event: str | None = None) -> None:
-        """Broadcast a job's current state to its owner (and administrators)."""
+        """Broadcast a job's current state to the dashboard."""
         data = serialize_download(row)
         self.bus.publish(
             event or _STATE_EVENTS.get(row.state, "download.updated"),
@@ -262,9 +260,8 @@ class DownloadManager:
     async def _schedule_locked(self) -> None:
         if self._stopping:
             return
-        active_by_user = Counter(h.user_id for h in self._active.values())
         picked, next_wait, changed = await self._db(
-            lambda s: self._pick(s, len(self._active), active_by_user)
+            lambda s: self._pick(s, len(self._active))
         )
         for row in changed:
             self.publish_download(row)
@@ -287,7 +284,7 @@ class DownloadManager:
             self._timer = asyncio.get_running_loop().call_later(max(0.2, next_wait), self._wake.set)
 
     def _pick(
-        self, session: Session, active_total: int, active_by_user: Counter
+        self, session: Session, active_total: int
     ) -> tuple[list[Download], float | None, list[Download]]:
         settings = self.settings.get()
         now = utcnow()
@@ -319,32 +316,17 @@ class DownloadManager:
         if free > 0:
             candidates = (
                 session.query(Download)
-                .join(User, User.id == Download.user_id)
-                .filter(Download.state == S.QUEUED.value, User.is_active.is_(True))
+                .filter(Download.state == S.QUEUED.value)
                 .order_by(Download.priority.desc(), Download.position, Download.id)
-                .limit(500)
+                .limit(free)
                 .all()
             )
-            limits: dict[int, int] = {}
-            counts = Counter(active_by_user)
             for row in candidates:
-                if free <= 0:
-                    break
-                if row.user_id not in limits:
-                    limits[row.user_id] = concurrency_limit(
-                        get_quota(session, row.user, settings), settings
-                    )
-                if counts[row.user_id] >= limits[row.user_id]:
-                    continue
                 row.state = S.INSPECTING.value
                 row.error_code, row.error_message = "", ""
-                counts[row.user_id] += 1
-                free -= 1
                 picked.append(row)
 
         session.flush()
-        for row in (*changed, *picked):
-            _ = row.user.username  # load while the session is open
         changed = [row for row in changed if row not in picked]
 
         soonest = (
@@ -374,8 +356,8 @@ class DownloadManager:
                     handle,
                     ProviderError(
                         "internal_error",
-                        "An internal error stopped this download. The administrator can "
-                        "find details in the server log.",
+                        "An internal error stopped this download. Details are in the "
+                        "log under Settings.",
                     ),
                 )
             )
@@ -391,17 +373,12 @@ class DownloadManager:
             row = session.get(Download, job_id)
             if row is None:
                 raise ProviderError("removed", "The download no longer exists.")
-            quota = get_quota(session, row.user, settings)
             return {
                 "url": row.url,
                 "provider": row.provider,
                 "filename": row.filename,
                 "destination": row.destination,
                 "folder": row.folder,
-                "max_file": quota.max_file_bytes,
-                "max_storage": quota.max_storage_bytes,
-                "bandwidth": quota.bandwidth_bps,
-                "reserved": reserved_bytes(session, row.user_id, exclude_id=job_id),
             }
 
         job = await self._db(load)
@@ -410,7 +387,7 @@ class DownloadManager:
             raise ProviderError(ErrorCode.UNSUPPORTED, "The provider for this link is not installed.")
         if not await asyncio.to_thread(self.registry.is_enabled, provider.id):
             raise ProviderError(
-                ErrorCode.DISABLED, f"The {provider.name} provider is disabled by the administrator."
+                ErrorCode.DISABLED, f"The {provider.name} provider is switched off on the Providers page."
             )
         ctx = await asyncio.to_thread(self.registry.context, provider)
 
@@ -420,25 +397,16 @@ class DownloadManager:
 
         # --- Limits (always enforced here, whatever the client claimed) --------
         scope, user_id = job["destination"], handle.user_id
-        used = await asyncio.to_thread(self.storage.usage, "private", user_id) if scope == "private" else 0
         room: int | None = None
-        if scope == "private" and job["max_storage"] > 0:
-            room = max(0, job["max_storage"] - used - job["reserved"])
         if settings.storage.max_storage_gb > 0:
             total_used = await asyncio.to_thread(self.storage.total_usage)
-            global_room = max(0, int(settings.storage.max_storage_gb * GB) - total_used)
-            room = global_room if room is None else min(room, global_room)
-        max_file = job["max_file"]
+            room = max(0, int(settings.storage.max_storage_gb * GB) - total_used)
 
         def check_size(size: int) -> None:
-            if max_file > 0 and size > max_file:
-                raise ProviderError(
-                    "file_too_large", "This file is larger than your maximum allowed file size."
-                )
             if room is not None and size > room:
                 raise ProviderError(
                     "storage_quota_exceeded",
-                    "There is not enough storage allocation left for this file.",
+                    "This file does not fit in the storage limit set under Settings.",
                 )
 
         check_size(resolved.size or 0)
@@ -446,8 +414,9 @@ class DownloadManager:
         if resolved.size and free_disk and resolved.size > free_disk:
             raise ProviderError("storage_error", "There is not enough free disk space for this file.")
 
-        limiter = self._limiters.setdefault(user_id, RateLimiter())
-        limiter.set_rate(job["bandwidth"])
+        # One limiter for all transfers: the speed limit applies to FETCH as a whole.
+        limiter = self._limiter
+        limiter.set_rate(settings.downloads.speed_limit_kbps * 1024)
 
         temp_dir = await asyncio.to_thread(self.storage.job_temp_dir, job_id)
         payload = temp_dir / PAYLOAD_NAME
@@ -471,7 +440,6 @@ class DownloadManager:
             row.total_bytes = resolved.size
             row.started_at = row.started_at or utcnow()
             row.wait_until, row.wait_reason = None, ""
-            _ = row.user.username
             return row
 
         row = await self._db(to_downloading)
@@ -497,7 +465,6 @@ class DownloadManager:
             row.speed_bps = 0.0
             row.avg_speed_bps = handle.average
             row.active_seconds = handle.base_seconds
-            _ = row.user.username
             return row
 
         self.publish_download(await self._db(to_verifying))
@@ -549,7 +516,6 @@ class DownloadManager:
             row.total_bytes = row.downloaded_bytes = size
             row.finished_at = utcnow()
             row.error_code, row.error_message = "", ""
-            _ = row.user.username
             return row
 
         row = await self._db(complete)
@@ -634,7 +600,6 @@ class DownloadManager:
             row.active_seconds = handle.active_seconds
             if target == S.CANCELLED:
                 row.finished_at = utcnow()
-            _ = row.user.username
             return row
 
         try:
@@ -680,7 +645,6 @@ class DownloadManager:
                 outcome = "failed"
                 row.state = S.FAILED.value
                 row.finished_at = utcnow()
-            _ = row.user.username
             return row, outcome
 
         try:
@@ -725,7 +689,6 @@ class DownloadManager:
                 return row if row is None else _detach(row)
             apply(row)
             session.flush()
-            _ = row.user.username
             return row
 
         return await self._db(run)
@@ -829,18 +792,11 @@ class DownloadManager:
         self.bus.publish("queue.changed", {}, audience="all")
         return True
 
-    async def stop_user_jobs(self, user_id: int, reason: str = "requeue") -> None:
-        """Interrupt everything a user has running (account disabled/deleted)."""
-        async with self._lock:
-            for handle in [h for h in self._active.values() if h.user_id == user_id]:
-                await self._stop_active(handle.job_id, reason)
-
     async def get(self, job_id: int) -> Download | None:
         def run(session: Session) -> Download | None:
             row = session.get(Download, job_id)
             if row is not None:
-                _ = row.user.username
-            return row
+                return row
 
         return await self._db(run)
 
@@ -875,7 +831,6 @@ class DownloadManager:
 
 
 def _detach(row: Download) -> Download:
-    _ = row.user.username
     return row
 
 

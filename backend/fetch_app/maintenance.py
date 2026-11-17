@@ -1,4 +1,4 @@
-"""Periodic housekeeping: expired sessions, temporary files, retention."""
+"""Periodic housekeeping: temporary files, retention."""
 
 from __future__ import annotations
 
@@ -12,8 +12,6 @@ from .models import (
     OPEN_STATES,
     Download,
     FileRecord,
-    Invitation,
-    Session,
 )
 from .storage import StorageError
 
@@ -23,14 +21,8 @@ log = logging.getLogger("fetch.maintenance")
 def run_maintenance(ctx: AppContext, force_temp: bool = False) -> dict:
     settings = ctx.settings.get().storage
     now = utcnow()
-    result = {"sessions": 0, "temp_folders": 0, "files": 0, "history": 0, "invitations": 0}
+    result = {"temp_folders": 0, "files": 0, "history": 0}
     with ctx.db.session() as session:
-        result["sessions"] = session.query(Session).filter(Session.expires_at <= now).delete()
-        result["invitations"] = (
-            session.query(Invitation)
-            .filter(Invitation.expires_at <= now - timedelta(days=30))
-            .delete()
-        )
         keep = {
             row.id
             for row in session.query(Download.id).filter(
@@ -55,7 +47,7 @@ def run_maintenance(ctx: AppContext, force_temp: bool = False) -> dict:
                 session.delete(record)
     try:
         # Failed and cancelled jobs keep no partial data; orphaned folders go
-        # after the configured age (immediately when an admin asks for it).
+        # after the configured age (immediately when asked for).
         result["temp_folders"] = ctx.storage.cleanup_temp(
             keep, 0 if force_temp else settings.temp_cleanup_hours
         )

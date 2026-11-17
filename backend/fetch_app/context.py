@@ -16,7 +16,6 @@ from .engine.manager import DownloadManager
 from .events import EventBus
 from .providers.registry import ProviderRegistry
 from .security.crypto import SecretBox
-from .security.ratelimit import LoginRateLimiter
 from .security.urlguard import UrlGuard
 from .settings_service import SettingsService
 from .storage import StorageManager
@@ -39,9 +38,12 @@ class AppContext:
     aria2: Aria2Service
     manager: DownloadManager
     updates: UpdateService
-    login_limiter: LoginRateLimiter = field(default_factory=LoginRateLimiter)
     started_at: float = field(default_factory=time.time)
     control_token: str = ""
+    # Id of the built-in local profile, filled in on first use.
+    local_user_id: int = 0
+    # Set by the desktop shell: brings its window to the front.
+    show_window: Any = None
     # Set by the CLI so the local control endpoint can stop the server.
     server: Any = None
     # Settings that changed since start and need a restart to apply.

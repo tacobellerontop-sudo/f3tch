@@ -123,12 +123,6 @@ def test_no_repository_means_no_request(admin, github):
     assert github.calls == []
 
 
-def test_updates_are_for_administrators_only(user, github):
-    assert user.get("/admin/update").status_code == 403
-    assert user.post("/admin/update/apply").status_code == 403
-    assert github.calls == []
-
-
 def test_apply_is_refused_when_the_server_cannot_restart_itself(admin, github):
     data = admin.get("/admin/update").json()
     assert data["can_apply"] is False and data["apply_blocker"]

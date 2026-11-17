@@ -13,9 +13,7 @@ from fetch_app.config import BootConfig
 
 from .fileserver import FileServer
 
-SETUP_TOKEN = "test-setup-token"
-ADMIN_PASSWORD = "admin-password-1"
-USER_PASSWORD = "user-password-1"
+BASE_URL = "http://127.0.0.1:8787"
 
 
 def make_boot(tmp_path: Path, **overrides) -> BootConfig:
@@ -27,7 +25,6 @@ def make_boot(tmp_path: Path, **overrides) -> BootConfig:
         storage_root=tmp_path / "storage",
         frontend_dist=tmp_path / "dist",
         secret_key=Fernet.generate_key().decode(),
-        setup_token=SETUP_TOKEN,
         ssrf_allowlist=["127.0.0.1"],
     )
     values.update(overrides)
@@ -35,11 +32,10 @@ def make_boot(tmp_path: Path, **overrides) -> BootConfig:
 
 
 class Api:
-    """TestClient wrapper that remembers the CSRF token like the real frontend."""
+    """TestClient that talks to FETCH the way its own window does: from this computer."""
 
-    def __init__(self, app, base_url: str = "http://testserver") -> None:
-        self.client = TestClient(app, base_url=base_url)
-        self.csrf = ""
+    def __init__(self, app, base_url: str = BASE_URL, client: tuple[str, int] = ("127.0.0.1", 50000)) -> None:
+        self.client = TestClient(app, base_url=base_url, client=client)
         self.user: dict = {}
 
     def __enter__(self) -> "Api":
@@ -49,58 +45,36 @@ class Api:
     def __exit__(self, *exc) -> None:
         self.client.__exit__(*exc)
 
-    def fork(self) -> "Api":
-        """A second browser talking to the same running app."""
-        other = Api.__new__(Api)
-        other.client = TestClient(self.client.app, base_url=str(self.client.base_url))
-        other.client.portal = self.client.portal  # share the running event loop
-        other.csrf, other.user = "", {}
-        return other
-
-    def _headers(self, extra=None) -> dict:
-        headers = {"X-CSRF-Token": self.csrf} if self.csrf else {}
-        headers.update(extra or {})
-        return headers
-
     def get(self, path, **kw):
         return self.client.get(f"/api{path}", **kw)
 
     def post(self, path, json=None, headers=None, **kw):
-        return self.client.post(f"/api{path}", json=json, headers=self._headers(headers), **kw)
+        return self.client.post(f"/api{path}", json=json, headers=headers, **kw)
 
     def put(self, path, json=None, **kw):
-        return self.client.put(f"/api{path}", json=json, headers=self._headers(), **kw)
+        return self.client.put(f"/api{path}", json=json, **kw)
 
     def patch(self, path, json=None, **kw):
-        return self.client.patch(f"/api{path}", json=json, headers=self._headers(), **kw)
+        return self.client.patch(f"/api{path}", json=json, **kw)
 
     def delete(self, path, **kw):
-        return self.client.delete(f"/api{path}", headers=self._headers(), **kw)
+        return self.client.delete(f"/api{path}", **kw)
 
-    def _remember(self, response) -> dict:
+    def open(self) -> dict:
+        """What the dashboard does first; also notes the id of the local profile,
+        which names the storage folder (``storage/downloads/<id>``)."""
+        response = self.get("/bootstrap")
         assert response.status_code == 200, response.text
-        data = response.json()
-        self.csrf, self.user = data["csrf_token"], data["user"]
-        return data
+        self.user = {"id": self.client.app.state.ctx.local_user_id}
+        return response.json()
 
-    def setup_admin(self, username="admin", password=ADMIN_PASSWORD) -> dict:
-        return self._remember(
-            self.post("/setup", json={"setup_token": SETUP_TOKEN, "username": username, "password": password})
-        )
+    # There are no accounts: these names remain for the tests written when
+    # there were, and simply open the dashboard.
+    def setup_admin(self, *_args, **_kwargs) -> dict:
+        return self.open()
 
-    def login(self, username, password) -> dict:
-        self.csrf = ""
-        return self._remember(self.post("/auth/login", json={"username": username, "password": password}))
-
-    def invite(self, role="user") -> str:
-        response = self.post("/invitations", json={"role": role})
-        assert response.status_code == 201, response.text
-        return response.json()["token"]
-
-    def register(self, token, username, password=USER_PASSWORD) -> dict:
-        return self._remember(
-            self.post("/auth/register", json={"token": token, "username": username, "password": password})
-        )
+    def login(self, *_args, **_kwargs) -> dict:
+        return self.open()
 
     # -- download helpers ------------------------------------------------------
 
@@ -157,19 +131,11 @@ def api(app):
 
 @pytest.fixture
 def admin(api):
-    api.setup_admin()
+    """The dashboard, opened. (The name dates from when there were accounts.)"""
+    api.open()
     # Tests should not wait 30 s for automatic retries.
     api.put("/settings", json={"downloads": {"retry_delay_seconds": 1}})
     return api
-
-
-@pytest.fixture
-def user(admin):
-    """A regular user in a separate browser session, next to ``admin``."""
-    token = admin.invite()
-    other = admin.fork()
-    other.register(token, "alice")
-    return other
 
 
 def payload(size: int, seed: int = 1) -> bytes:

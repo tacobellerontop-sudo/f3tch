@@ -1,4 +1,4 @@
-"""WebSocket event stream and per-user event authorization."""
+"""WebSocket event stream."""
 
 import json
 import time
@@ -6,7 +6,7 @@ import time
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from fetch_app.events import EventBus, Subscriber
+from fetch_app.events import EventBus
 
 from .conftest import payload
 
@@ -20,14 +20,6 @@ def collect(ws, until, limit=400):
         if until(event):
             return events
     raise AssertionError(f"event not seen; got {[e['type'] for e in events]}")
-
-
-def test_subscriber_authorization_matrix():
-    alice, admin = Subscriber(user_id=2, is_admin=False), Subscriber(user_id=1, is_admin=True)
-    assert alice.may_receive(2, "owner") and not alice.may_receive(3, "owner")
-    assert not alice.may_receive(None, "owner") and not alice.may_receive(2, "admin")
-    assert alice.may_receive(None, "all")
-    assert admin.may_receive(3, "owner") and admin.may_receive(None, "admin")
 
 
 def test_bus_drops_oldest_for_slow_clients():
@@ -45,25 +37,26 @@ def test_bus_drops_oldest_for_slow_clients():
     asyncio.run(scenario())
 
 
-def test_unauthenticated_websocket_is_closed(api):
-    with api.client.websocket_connect("/api/ws") as ws:
-        with pytest.raises(WebSocketDisconnect) as closed:
-            ws.receive_text()
-    assert closed.value.code == 4401
-
-
 def test_cross_origin_websocket_is_refused(admin):
-    with admin.client.websocket_connect("/api/ws", headers={"Origin": "https://evil.example"}) as ws:
-        with pytest.raises(WebSocketDisconnect) as closed:
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with admin.client.websocket_connect("ws://127.0.0.1:8787/api/ws", headers={"Origin": "https://evil.example"}) as ws:
             ws.receive_text()
-    assert closed.value.code == 4401
+    assert closed.value.code == 1008
+
+
+def test_websocket_under_a_foreign_host_name_is_refused(admin):
+    """A page elsewhere that resolves its own name to 127.0.0.1 (DNS rebinding)."""
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with admin.client.websocket_connect("ws://127.0.0.1:8787/api/ws", headers={"Host": "evil.example:8787"}) as ws:
+            ws.receive_text()
+    assert closed.value.code == 1008
 
 
 def test_download_lifecycle_events_are_pushed(admin, fileserver):
     data = fileserver.add("stream.bin", payload(900_000))
-    with admin.client.websocket_connect("/api/ws") as ws:
+    with admin.client.websocket_connect("ws://127.0.0.1:8787/api/ws") as ws:
         hello = json.loads(ws.receive_text())
-        assert hello["type"] == "hello" and hello["data"]["user_id"] == admin.user["id"]
+        assert hello["type"] == "hello" and hello["data"]["server_time"] > 0
         job_id = admin.submit(fileserver.url("slow", "stream.bin"))["created"][0]["id"]
         events = collect(
             ws, lambda e: e["type"] == "activity" and e["data"]["action"] == "download.completed"
@@ -85,33 +78,9 @@ def test_download_lifecycle_events_are_pushed(admin, fileserver):
     assert final["state"] == "completed" and final["downloaded_bytes"] == len(data)
 
 
-def test_users_never_receive_each_others_events(admin, user, fileserver):
-    fileserver.add("secret-admin-file.bin", payload(300_000))
-    fileserver.add("alice.bin", payload(1000))
-    with user.client.websocket_connect("/api/ws") as alice_ws, admin.client.websocket_connect("/api/ws") as admin_ws:
-        json.loads(alice_ws.receive_text()), json.loads(admin_ws.receive_text())
-        admin_job = admin.submit(fileserver.url("slow", "secret-admin-file.bin"))["created"][0]["id"]
-        admin.wait_state(admin_job, "completed")
-        alice_job = user.submit(fileserver.url("file", "alice.bin"))["created"][0]["id"]
-        alice_events = collect(alice_ws, lambda e: e["type"] == "download.completed")
-        admin_events = collect(
-            admin_ws, lambda e: e["type"] == "download.completed" and e["data"]["download"]["id"] == alice_job
-        )
-    # Alice saw her own job and nothing that identifies the admin's download.
-    assert "secret-admin-file" not in json.dumps(alice_events)
-    for event in alice_events:
-        data = event["data"]
-        assert data.get("id") != admin_job
-        assert data.get("download", {}).get("id") != admin_job
-        assert data.get("user_id") in (None, user.user["id"])
-    # Administrators observe everybody's jobs.
-    seen = {e["data"]["download"]["id"] for e in admin_events if "download" in e["data"]}
-    assert seen == {admin_job, alice_job}
-
-
 def test_pause_event_and_removal_event(admin, fileserver):
     fileserver.add("p.bin", payload(600_000))
-    with admin.client.websocket_connect("/api/ws") as ws:
+    with admin.client.websocket_connect("ws://127.0.0.1:8787/api/ws") as ws:
         json.loads(ws.receive_text())
         job_id = admin.submit(fileserver.url("slow", "p.bin"))["created"][0]["id"]
         collect(ws, lambda e: e["type"] == "download.progress")
@@ -121,14 +90,3 @@ def test_pause_event_and_removal_event(admin, fileserver):
         admin.delete(f"/downloads/{job_id}")
         removed = collect(ws, lambda e: e["type"] == "download.removed")[-1]
         assert removed["data"] == {"id": job_id}
-
-
-def test_socket_closes_when_session_is_revoked(admin, user):
-    with user.client.websocket_connect("/api/ws") as ws:
-        json.loads(ws.receive_text())
-        session_id = next(s["id"] for s in admin.get("/admin/sessions").json() if s["username"] == "alice")
-        assert admin.delete(f"/admin/sessions/{session_id}").status_code == 200
-        with pytest.raises(WebSocketDisconnect):
-            for _ in range(50):
-                ws.receive_text()
-    assert user.get("/auth/me").status_code == 401

@@ -5,7 +5,7 @@ import time
 
 from fetch_app.app import create_app
 
-from .conftest import ADMIN_PASSWORD, Api, payload
+from .conftest import Api, payload
 
 
 def stored(boot, api, name):
@@ -198,7 +198,7 @@ def test_destination_folder_and_shared_space(admin, fileserver, boot):
 
 
 def test_global_concurrency_and_priority_order(admin, fileserver):
-    admin.put("/settings", json={"downloads": {"max_global_concurrent": 1, "max_per_user_concurrent": 1}})
+    admin.put("/settings", json={"downloads": {"max_global_concurrent": 1}})
     for name in "abcd":
         fileserver.add(f"{name}.bin", payload(500_000 if name == "a" else 100_000))
     first = admin.submit(fileserver.url("slow", "a.bin"))["created"][0]["id"]
@@ -295,7 +295,7 @@ def test_queue_survives_restart_and_resumes(tmp_path, fileserver):
     boot = make_boot(tmp_path)
     data = fileserver.add("long.bin", payload(800_000))
     with Api(create_app(boot)) as api:
-        api.setup_admin()
+        api.open()
         api.put("/settings", json={"downloads": {"max_global_concurrent": 1}})
         running = api.submit(fileserver.url("slow", "long.bin"))["created"][0]["id"]
         queued = api.submit(fileserver.url("file", "long.bin"))["created"][0]["id"]
@@ -310,7 +310,7 @@ def test_queue_survives_restart_and_resumes(tmp_path, fileserver):
 
     fileserver.requests.clear()
     with Api(create_app(boot)) as api:
-        api.login("admin", ADMIN_PASSWORD)
+        api.open()
         assert api.get("/settings").json()["settings"]["downloads"]["max_global_concurrent"] == 1
         done = api.wait_state(running, "completed", timeout=40)
         api.wait_state(queued, "completed", timeout=40)
