@@ -1,9 +1,35 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0] - 2026-11-17
+
+FETCH is now a desktop app for your own PC, without accounts.
+
+### Install
+
+Download `FETCH.exe`, put it in a folder of its own and double-click it.
+FETCH opens in its own window; there is no account to create and nothing to
+sign in to. To give FETCH to a friend, send them `FETCH.exe`: each copy is
+its own program with its own downloads.
+
+Updating from 1.x with **Settings > Updates** keeps your downloads, history,
+settings and provider credentials. The administrator's downloads become
+yours. Other people's files stay in their folders under `storage\downloads\`.
 
 ### Added
 
+- **Desktop window.** `FETCH.exe` shows the dashboard in its own window
+  (Microsoft Edge WebView2) and runs the server inside the same program. No
+  browser tab and no console window. Without WebView2 it falls back to the
+  browser.
+- **Tray icon.** Closing the window keeps FETCH running in the notification
+  area so downloads continue; the tray menu opens the window or the download
+  folder, or quits FETCH. **Settings > General > Keep running when the window
+  is closed** turns this off.
+- Starting `FETCH.exe` again brings the open window to the front.
+- **Show in folder.** **Files > Open folder** and the folder button next to a
+  file open File Explorer at that place.
+- A global **speed limit** under **Settings > Downloads**.
+- `FETCH.exe run --headless` starts only the server.
 - **Rapidgator without an account.** Rapidgator links can be inspected and
   downloaded through Rapidgator's free download. FETCH waits the full period
   Rapidgator announces and then asks you to complete Rapidgator's CAPTCHA
@@ -16,13 +42,36 @@
   existing codes, and a refused free account is no longer reported as a
   CAPTCHA.
 
+### Removed
+
+- Accounts: sign-in, first-run setup token, users, roles, invitations,
+  sessions, per-user quotas, and the `create-admin` command. A database
+  migration (`0003`) drops their tables; your downloads are kept.
+- Network access from other devices: the bind address, public URL, trusted
+  proxies and cross-origin settings, and the Tailscale instructions. FETCH
+  listens on `127.0.0.1` only.
+- The `-BindAddress` option of `install.ps1` and the `--bind` / `--host`
+  options of the command line.
+
+### Security
+
+- FETCH only answers to this computer: requests from other addresses, or that
+  name FETCH by any host name other than `localhost` or `127.0.0.1` (DNS
+  rebinding), are refused.
+- Changes and the live connection must come from FETCH's own page; another
+  website open in your browser cannot drive FETCH.
+
 ### Changed
 
-- The database gains a small migration (`0002`); it is applied automatically
-  at start.
+- Database migrations `0002` (provider sign-in modes) and `0003` (remove
+  accounts) are applied automatically at start; a backup is made first when
+  updating.
 
 ### Not verified
 
+- The window and the tray icon on a real Windows desktop by a person. The
+  automated checks open the window with WebView2 on a Windows runner; the
+  tray icon is covered only by tests with a stand-in.
 - The anonymous Rapidgator flow is tested against a local emulation only. It
   has not been run against rapidgator.net.
 

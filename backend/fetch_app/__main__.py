@@ -272,7 +272,7 @@ def _serve(boot: BootConfig, args: argparse.Namespace, on_started=None, on_serve
         return fail(f"FETCH could not start: {exc}")
     ctx = app.state.ctx
     host, port = ctx.settings.effective_bind()
-    host, port = getattr(args, "host", None) or host, getattr(args, "port", None) or port
+    port = getattr(args, "port", None) or port
     config = uvicorn.Config(
         app, host=host, port=port, log_config=None, access_log=False,
         timeout_graceful_shutdown=20, ws_ping_interval=30, ws_ping_timeout=30,
@@ -339,7 +339,6 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=_init)
 
     p = sub.add_parser("serve", help="run the server")
-    p.add_argument("--host", default=None)
     p.add_argument("--port", type=int, default=None)
     p.set_defaults(func=_serve)
 
