@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Rapidgator without an account.** Rapidgator links can be inspected and
+  downloaded through Rapidgator's free download. FETCH waits the full period
+  Rapidgator announces and then asks you to complete Rapidgator's CAPTCHA
+  yourself (**Complete CAPTCHA** on the download). FETCH never solves or
+  skips a CAPTCHA and never shortens a wait. Free downloads run one at a time.
+- **Sign-in modes.** Each provider declares whether it works anonymously,
+  with a stored account, or both. **Providers** shows what is available and
+  configured, and lets you choose Automatic, Anonymous or Stored account.
+- More precise errors: `premium_only` and `anonymous_unavailable` join the
+  existing codes, and a refused free account is no longer reported as a
+  CAPTCHA.
+
+### Changed
+
+- The database gains a small migration (`0002`); it is applied automatically
+  at start.
+
+### Not verified
+
+- The anonymous Rapidgator flow is tested against a local emulation only. It
+  has not been run against rapidgator.net.
+
 ## [1.1.0] - 2026-11-17
 
 FETCH is now a single file.

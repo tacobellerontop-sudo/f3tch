@@ -147,6 +147,9 @@ export function useCountdown(iso: string | null): number | null {
 export function WaitNote({ download }: { download: Download }) {
   const seconds = useCountdown(download.state === "waiting" ? download.wait_until : null);
   if (download.state !== "waiting") return null;
+  if (download.error_code === "captcha_required") {
+    return <span className="text-xs font-medium text-warning">Needs you: open it to complete the CAPTCHA</span>;
+  }
   return (
     <span className="text-xs text-warning">
       {seconds !== null && seconds > 0 ? `Continues in ${formatDuration(seconds)}` : "Continuing…"}

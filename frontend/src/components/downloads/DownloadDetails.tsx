@@ -1,10 +1,12 @@
 import { Copy } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button, Dialog, ErrorNote, Notice, useToast } from "@/components/ui";
 import { formatBytes, formatDateTime, formatDuration, formatSpeed, priorityLabel } from "@/lib/format";
+import { isAwaitingCaptcha } from "@/lib/queries";
 import type { Download } from "@/lib/types";
 
+import { CaptchaDialog } from "./CaptchaDialog";
 import { DownloadActions } from "./actions";
 import { DownloadProgress, providerLabel, StateBadge, useLive, WaitNote } from "./parts";
 
@@ -35,6 +37,8 @@ export function DownloadDetails({ download, currentUserId, showOwner, onClose }:
 function Body({ download, currentUserId, showOwner }: { download: Download; currentUserId: number; showOwner: boolean }) {
   const live = useLive(download);
   const toast = useToast();
+  const [captchaOpen, setCaptchaOpen] = useState(false);
+  const needsCaptcha = isAwaitingCaptcha(download);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(download.url);
@@ -53,11 +57,18 @@ function Body({ download, currentUserId, showOwner }: { download: Download; curr
       {download.state === "waiting" && (
         <Notice tone="warning">
           <p>{download.wait_reason || "Waiting for the provider."}</p>
-          <p className="mt-1">
-            <WaitNote download={download} />
-          </p>
+          {needsCaptcha ? (
+            <Button className="mt-2" size="sm" variant="primary" onClick={() => setCaptchaOpen(true)}>
+              Complete CAPTCHA
+            </Button>
+          ) : (
+            <p className="mt-1">
+              <WaitNote download={download} />
+            </p>
+          )}
         </Notice>
       )}
+      <CaptchaDialog download={captchaOpen && needsCaptcha ? download : null} onClose={() => setCaptchaOpen(false)} />
       {download.state === "failed" && <ErrorNote>{download.error_message || "The download failed."}</ErrorNote>}
 
       <dl className="divide-y divide-line border-y border-line">

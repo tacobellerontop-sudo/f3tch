@@ -6,6 +6,7 @@ import base64
 import re
 
 from .base import (
+    AuthMode,
     Capabilities,
     CredentialField,
     ErrorCode,
@@ -30,6 +31,7 @@ class PixeldrainProvider(ProviderAdapter):
     homepage = "https://pixeldrain.com"
     priority = 30
     capabilities = Capabilities(credentials=True, checksum=True, captcha=True)
+    auth_modes = (AuthMode.ANONYMOUS, AuthMode.ACCOUNT)
     credential_fields = (
         CredentialField(
             "api_key",

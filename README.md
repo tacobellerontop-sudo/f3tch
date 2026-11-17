@@ -214,7 +214,7 @@ a service to the whole internet.
 | Pixeldrain | Yes | Optional API key | Single-file links |
 | MEGA | Yes | Nothing | Public file links with their key; decrypted and verified locally |
 | Google Drive | No | Your own API key or service account | Publicly shared or explicitly shared files |
-| Rapidgator | No | Your own account whose plan allows API downloads (in practice Premium) | Official API only |
+| Rapidgator | Yes | Nothing for free downloads (you wait and complete Rapidgator's CAPTCHA yourself). Optionally your own Premium account | Free download flow, or the official API with an account |
 
 Credentials are entered under **Providers** by an administrator, encrypted at
 rest, and never shown again to anyone. Each provider card states exactly what
@@ -358,7 +358,8 @@ if you no longer need them.
 | A friend cannot open the dashboard | Check that both devices are connected to Tailscale and that the address matches the setup you chose above |
 | "Sign in" works but every action fails with a CSRF or origin error | You are reaching FETCH through an address it does not know. Set **Public URL** in Settings > Network, or open it by the address shown at start |
 | A link is rejected as "unsafe address" | The link points to a private or local address. If that is intended (a NAS on your LAN), add the host to `ssrf_allowlist` in `config\fetch.toml` and restart |
-| Rapidgator says "CAPTCHA required" | The link needs an account whose plan allows API downloads. FETCH does not solve CAPTCHAs |
+| A Rapidgator download says "Needs you" | Rapidgator's free download asks for a CAPTCHA. Open the download and choose **Complete CAPTCHA**. FETCH shows it to you and never solves it. See [docs/PROVIDERS.md](docs/PROVIDERS.md#rapidgator) |
+| Rapidgator says "Premium only" | The file is Premium-only or over the free size limit, or the stored account is not Premium |
 | MEGA downloads pause with a countdown | MEGA's transfer quota for your IP address is used up. FETCH continues when MEGA allows it |
 | aria2 shows as "optional, not in use" | Install aria2 or place `aria2c.exe` in `tools\aria2\`, then restart. FETCH works without it |
 | Something else | **Settings > Diagnostics** shows health checks; **Settings > Logs** and `logs\fetch.log` show details |
@@ -370,14 +371,18 @@ if you no longer need them.
 - Rapidgator, MEGA, Pixeldrain and Google Drive were implemented from the
   providers' published interfaces and are tested against local emulations of
   them. They have **not** been run against the live services by the automated
-  tests, and Rapidgator has not been confirmed with a real Premium account.
+  tests. Rapidgator has not been confirmed with a real Premium account, and
+  its anonymous free download has not been confirmed against the live site.
   Use **Providers > Test connection** after entering credentials.
 - Folder links (MEGA, Google Drive, Pixeldrain lists) are not supported; add
   the individual file links.
 - Native Google Docs, Sheets and Slides cannot be downloaded (they are not
   files); export them in Google Drive first.
-- Free Rapidgator links and anything else that needs a CAPTCHA or a browser
-  login cannot be downloaded.
+- Free Rapidgator downloads need you to complete Rapidgator's CAPTCHA, and
+  run one at a time without resume. If Rapidgator serves a CAPTCHA widget
+  that only works on its own site, you complete the steps in your browser
+  and paste the download address into FETCH.
+- Anything else that needs a browser login cannot be downloaded.
 - One server process, one SQLite database: built for a household or a group of
   friends, not for hundreds of concurrent users.
 - `FETCH.exe` is built and tested on Windows by the automated checks: start

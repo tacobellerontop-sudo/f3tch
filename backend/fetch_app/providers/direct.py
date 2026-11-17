@@ -7,6 +7,7 @@ from email.message import Message
 from urllib.parse import unquote, urlsplit
 
 from .base import (
+    AuthMode,
     Capabilities,
     ErrorCode,
     HealthReport,
@@ -42,6 +43,7 @@ class DirectHttpProvider(ProviderAdapter):
     description = "Any publicly reachable http:// or https:// file link."
     priority = 1000  # asked last: every other provider gets the first look
     capabilities = Capabilities(resume=True)
+    auth_modes = (AuthMode.ANONYMOUS,)
     notes = (
         "Resume works when the server supports range requests and sends an ETag or "
         "Last-Modified header.",

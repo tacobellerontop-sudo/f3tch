@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AppSettings, SettingsPayload, UpdateStatus } from "@/lib/types";
 
-import { type Call, HttpFailure, makeAdminUser, makeMe, makeProvider, renderApp, signedIn } from "./harness";
+import { type Call, HttpFailure, makeAdminUser, makeAuth, makeMe, makeProvider, renderApp, signedIn } from "./harness";
 
 const settings: AppSettings = {
   general: { app_name: "FETCH", theme: "dark", language: "en", default_destination: "private", check_for_updates: true },
@@ -64,12 +64,14 @@ describe("access control in the interface", () => {
 
   it("does not offer provider administration to regular users", async () => {
     renderApp("/providers", signedIn(makeMe("user"), {
-      "GET /providers": [makeProvider({ id: "rapidgator", name: "Rapidgator", ready: false, capabilities: { ...makeProvider().capabilities, anonymous: false, credentials: true, requires_credentials: true, captcha: true } })],
+      "GET /providers": [makeProvider({ id: "gdrive", name: "Google Drive", ready: false, auth: makeAuth({ modes: ["account"], anonymous_available: false, authentication_required: true, effective_mode: null, status: "auth_required", message: "Google Drive needs an account and none is configured. Add one under Providers." }), capabilities: { ...makeProvider().capabilities, anonymous: false, credentials: true, requires_credentials: true, captcha: true } })],
     }));
-    expect(await screen.findByText("Rapidgator")).toBeInTheDocument();
-    expect(screen.getByText("Needs credentials")).toBeInTheDocument();
-    expect(screen.getByText("CAPTCHA links are not downloaded")).toBeInTheDocument();
+    expect(await screen.findByText("Google Drive")).toBeInTheDocument();
+    expect(screen.getByText("Authentication required")).toBeInTheDocument();
+    expect(screen.getByText("No account stored")).toBeInTheDocument();
+    expect(screen.getByText(/CAPTCHAs are completed by you/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /credentials/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /Sign-in mode/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
 });
@@ -164,6 +166,22 @@ describe("providers and settings", () => {
     await user.click(dialog.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(server.find("PUT", "/providers/rapidgator/credentials")).toHaveLength(1));
     expect(server.find("PUT", "/providers/rapidgator/credentials")[0].body).toEqual({ values: { login: "me@example.com", password: "s3cret" } });
+  });
+
+  it("shows the sign-in state of a provider and lets the mode be chosen", async () => {
+    const configured = { ...rapidgator, ready: true, configured: true, auth: makeAuth({ modes: ["anonymous", "account"], account_configured: true, account_valid: true, effective_mode: "account", status: "account" }) };
+    const { user, server } = renderApp("/providers", admin({
+      "GET /providers": [configured, makeProvider({ id: "mega", name: "MEGA", enabled: true, auth: makeAuth({ provider_available: false, status: "unavailable", message: "MEGA was unreachable the last time FETCH contacted it." }) })],
+      "PUT /providers/rapidgator/auth-mode": { ...configured, auth: makeAuth({ modes: ["anonymous", "account"], account_configured: true, preference: "anonymous" }) },
+    }));
+    expect(await screen.findByText("Using stored account")).toBeInTheDocument();
+    expect(screen.getAllByText("Anonymous access available").length).toBeGreaterThan(0);
+    expect(screen.getByText("Account configured and verified")).toBeInTheDocument();
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Sign-in mode for MEGA" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sign-in mode for Rapidgator" }), "anonymous");
+    await waitFor(() => expect(server.find("PUT", "/providers/rapidgator/auth-mode")).toHaveLength(1));
+    expect(server.find("PUT", "/providers/rapidgator/auth-mode")[0].body).toEqual({ mode: "anonymous" });
   });
 
   it("runs a connection test and reports a failure honestly", async () => {
