@@ -1,56 +1,26 @@
 // Shapes of the FETCH API. Kept in one place so that the frontend and the
 // backend (backend/fetch_app/schemas.py) can be compared side by side.
 
-export type Role = "admin" | "user";
 export type ThemeChoice = "dark" | "light" | "system";
 
-export interface User {
-  id: number;
-  username: string;
-  display_name: string;
-  role: Role;
-  is_active: boolean;
-  theme: "" | ThemeChoice;
-  must_change_password: boolean;
-  created_at: string;
-  last_login_at: string | null;
-}
-
-export interface QuotaLimits {
+export interface Usage {
+  storage_bytes: number;
+  /** 0 means no limit. */
+  storage_limit_bytes: number;
   max_concurrent: number;
-  max_storage_bytes: number;
-  max_file_bytes: number;
-  daily_downloads: number;
-  bandwidth_bps: number;
-  max_queued: number;
-}
-
-export interface QuotaSummary {
-  limits: QuotaLimits;
-  usage: {
-    storage_bytes: number;
-    active_downloads: number;
-    open_downloads: number;
-    downloads_today: number;
-  };
-}
-
-export interface Me {
-  user: User;
-  csrf_token: string;
-  quota: QuotaSummary;
-  session_expires_at: string;
+  active_downloads: number;
+  open_downloads: number;
+  downloads_today: number;
 }
 
 export interface Bootstrap {
   app_name: string;
   version: string;
-  setup_required: boolean;
-  invitations_required: boolean;
   default_theme: ThemeChoice;
   language: string;
-  password_min_length: number;
-  password_require_mixed: boolean;
+  /** The theme picked under Settings ("" until one is picked). */
+  theme: "" | ThemeChoice;
+  usage: Usage;
 }
 
 export type DownloadState =
@@ -67,8 +37,6 @@ export type DownloadState =
 
 export interface Download {
   id: number;
-  user_id: number;
-  owner: string;
   url: string;
   provider: string;
   filename: string;
@@ -167,22 +135,18 @@ export interface FileItem {
   downloaded_at: string | null;
   provider: string;
   source_url: string;
-  owner: string;
-  can_delete: boolean;
 }
 
 export interface FileListing extends Page<FileItem> {
   scope: "private" | "shared";
   path: string;
-  owner_id: number | null;
-  can_write: boolean;
 }
 
 export interface StorageUsage {
   private: { used_bytes: number; limit_bytes: number };
-  shared: { enabled: boolean; used_bytes: number };
-  disk?: { total: number; used: number; free: number };
-  users?: { user_id: number; username: string; used_bytes: number }[];
+  /** Only holds files saved by versions that had a shared folder. */
+  shared: { used_bytes: number };
+  disk: { total: number; used: number; free: number };
 }
 
 export interface Capabilities {
@@ -239,7 +203,6 @@ export interface Provider {
   ready: boolean;
   auth_modes?: AuthMode[];
   auth?: ProviderAuth;
-  // Administrators only:
   credential_fields?: CredentialField[];
   health?: "ok" | "error" | "unknown" | "unavailable";
   health_message?: string;
@@ -272,45 +235,6 @@ export interface ActivityItem {
   level: "info" | "warning" | "error";
   message: string;
   target: string;
-  username: string;
-  ip_address: string;
-}
-
-export interface AdminUser extends User {
-  quota: QuotaLimits;
-  storage_bytes: number;
-  open_downloads: number;
-  total_downloads: number;
-  active_sessions: number;
-}
-
-export interface Invitation {
-  id: number;
-  role: Role;
-  note: string;
-  created_at: string;
-  expires_at: string;
-  used_at: string | null;
-  revoked: boolean;
-  status: "active" | "used" | "revoked" | "expired";
-}
-
-export interface CreatedInvitation extends Invitation {
-  token: string;
-  path: string;
-  url: string;
-}
-
-export interface SessionInfo {
-  id: number;
-  user_id: number;
-  username: string;
-  created_at: string;
-  last_seen_at: string;
-  expires_at: string;
-  ip_address: string;
-  user_agent: string;
-  current: boolean;
 }
 
 export interface AppSettings {
@@ -320,10 +244,11 @@ export interface AppSettings {
     language: string;
     default_destination: "private" | "shared";
     check_for_updates: boolean;
+    close_to_tray: boolean;
   };
   downloads: {
     max_global_concurrent: number;
-    max_per_user_concurrent: number;
+    speed_limit_kbps: number;
     retry_count: number;
     retry_delay_seconds: number;
     default_priority: number;
@@ -338,33 +263,9 @@ export interface AppSettings {
     temp_cleanup_hours: number;
     auto_delete_days: number;
     history_retention_days: number;
-    shared_enabled: boolean;
-    users_can_write_shared: boolean;
   };
   network: {
-    bind_address: string;
     port: number;
-    trusted_proxies: string[];
-    cors_origins: string[];
-    public_url: string;
-  };
-  security: {
-    session_hours: number;
-    invitations_required: boolean;
-    invitation_expiry_hours: number;
-    password_min_length: number;
-    password_require_mixed: boolean;
-    login_max_attempts: number;
-    login_window_minutes: number;
-    login_lockout_minutes: number;
-  };
-  quota_defaults: {
-    max_concurrent: number;
-    max_storage_gb: number;
-    max_file_gb: number;
-    daily_downloads: number;
-    bandwidth_kbps: number;
-    max_queued: number;
   };
 }
 

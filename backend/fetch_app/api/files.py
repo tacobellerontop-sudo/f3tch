@@ -1,18 +1,20 @@
-"""File manager: browse, search, download (streamed), create folders, delete."""
+"""File manager: browse, search, download (streamed), show in the computer's
+file manager, create folders, delete."""
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session as DbSession
 
-from ..context import AppContext
 from ..models import FileRecord, User
-from ..quotas import get_quota
-from ..schemas import FolderIn
+from ..settings_service import GB
+from ..schemas import FolderIn, RevealIn
 from ..storage import StorageError, clean_rel_path
 from .deps import ApiError, Ctx, CurrentUser, Db, client_ip
 
@@ -21,20 +23,10 @@ router = APIRouter(prefix="/files", tags=["files"])
 Scope = Literal["private", "shared"]
 
 
-def _space(ctx: AppContext, db: DbSession, user: User, scope: str, owner_id: int | None) -> int:
-    """Resolve whose space is addressed and check the caller may read it."""
-    if scope == "shared":
-        if not ctx.settings.get().storage.shared_enabled and not user.is_admin:
-            raise ApiError(403, "shared_disabled", "The shared folder is disabled.")
-        return 0
-    if owner_id is None or owner_id == user.id:
-        return user.id
-    if not user.is_admin:
-        # Never reveal whether another user's path exists.
-        raise ApiError(404, "not_found", "File not found.")
-    if db.get(User, owner_id) is None:
-        raise ApiError(404, "not_found", "User not found.")
-    return owner_id
+def _space(user: User, scope: str) -> int:
+    """Storage space key: the local profile's folder, or 0 for the shared folder
+    (kept readable for files saved there by a version that had accounts)."""
+    return 0 if scope == "shared" else user.id
 
 
 def _iso(timestamp: float) -> str:
@@ -52,11 +44,10 @@ def list_files(
     type: str = Query("", max_length=16),
     sort: Literal["name", "size", "modified"] = "name",
     order: Literal["asc", "desc"] = "asc",
-    owner_id: int | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(200, ge=1, le=1000),
 ) -> dict:
-    space = _space(ctx, db, user, scope, owner_id)
+    space = _space(user, scope)
     try:
         rel = clean_rel_path(path)
         entries = (
@@ -88,16 +79,10 @@ def list_files(
         )
         .all()
     } if window else {}
-    owners: dict[int, str] = {}
-    if scope == "shared":
-        ids = {r.owner_id for r in records.values() if r.owner_id}
-        if ids:
-            owners = dict(db.query(User.id, User.username).filter(User.id.in_(ids)).all())
 
     items = []
     for entry in window:
         record = records.get(entry.path)
-        can_see_source = record is not None and (user.is_admin or record.owner_id == user.id)
         items.append(
             {
                 "name": entry.name,
@@ -108,61 +93,31 @@ def list_files(
                 "modified_at": _iso(entry.modified),
                 "downloaded_at": record.created_at.isoformat() + "Z" if record else None,
                 "provider": record.provider if record else "",
-                "source_url": record.source_url if can_see_source else "",
-                "owner": owners.get(record.owner_id, "") if record and record.owner_id else "",
-                "can_delete": _may_delete(ctx, user, scope, record, entry.is_dir),
+                "source_url": record.source_url if record else "",
             }
         )
     return {
         "scope": scope,
         "path": rel,
-        "owner_id": space if scope == "private" else None,
         "items": items,
         "total": total,
         "page": page,
         "page_size": page_size,
-        "can_write": _may_write(ctx, user, scope),
     }
-
-
-def _may_write(ctx: AppContext, user: User, scope: str) -> bool:
-    if scope == "private" or user.is_admin:
-        return True
-    storage = ctx.settings.get().storage
-    return storage.shared_enabled and storage.users_can_write_shared
-
-
-def _may_delete(ctx: AppContext, user: User, scope: str, record: FileRecord | None, is_dir: bool) -> bool:
-    if scope == "private" or user.is_admin:
-        return True
-    # In the shared space a regular user may only delete files they added.
-    return (
-        _may_write(ctx, user, scope) and not is_dir
-        and record is not None and record.owner_id == user.id
-    )
 
 
 @router.get("/usage")
 def usage(user: CurrentUser, ctx: Ctx, db: Db) -> dict:
     settings = ctx.settings.get()
-    quota = get_quota(db, user, settings)
-    data = {
+    return {
         "private": {
             "used_bytes": ctx.storage.usage("private", user.id),
-            "limit_bytes": quota.max_storage_bytes,
+            # 0 means "no limit".
+            "limit_bytes": int(settings.storage.max_storage_gb * GB),
         },
-        "shared": {
-            "enabled": settings.storage.shared_enabled,
-            "used_bytes": ctx.storage.usage("shared") if settings.storage.shared_enabled else 0,
-        },
+        "shared": {"used_bytes": ctx.storage.usage("shared")},
+        "disk": ctx.storage.disk(),
     }
-    if user.is_admin:
-        data["disk"] = ctx.storage.disk()
-        data["users"] = [
-            {"user_id": uid, "username": name, "used_bytes": ctx.storage.usage("private", uid)}
-            for uid, name in db.query(User.id, User.username).order_by(User.username).all()
-        ]
-    return data
 
 
 @router.get("/download")
@@ -173,9 +128,8 @@ def download_file(
     db: Db,
     path: str = Query(..., min_length=1, max_length=1024),
     scope: Scope = "private",
-    owner_id: int | None = None,
 ) -> FileResponse:
-    space = _space(ctx, db, user, scope, owner_id)
+    space = _space(user, scope)
     try:
         target = ctx.storage.resolve(scope, space, path)
     except StorageError as exc:
@@ -200,11 +154,43 @@ def download_file(
     )
 
 
+def open_in_file_manager(target: Path) -> None:
+    """Show `target` in the computer's file manager: a file is selected in its
+    folder, a folder is opened. Never runs or opens the file itself.
+    Tests replace this function."""
+    if sys.platform == "win32":
+        if target.is_dir():
+            subprocess.Popen(["explorer.exe", str(target)])  # noqa: S603, S607
+        else:
+            subprocess.Popen(["explorer.exe", "/select,", str(target)])  # noqa: S603, S607
+    elif sys.platform == "darwin":
+        args = ["open", str(target)] if target.is_dir() else ["open", "-R", str(target)]
+        subprocess.Popen(args)  # noqa: S603, S607
+    else:
+        folder = target if target.is_dir() else target.parent
+        subprocess.Popen(["xdg-open", str(folder)], start_new_session=True)  # noqa: S603, S607
+
+
+@router.post("/reveal")
+def reveal(body: RevealIn, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
+    space = _space(user, body.scope)
+    try:
+        target = ctx.storage.resolve(body.scope, space, body.path)
+    except StorageError as exc:
+        raise ApiError(404, "not_found", "File not found.") from exc
+    db.commit()
+    if not target.exists() or target.is_symlink():
+        raise ApiError(404, "not_found", "File not found.")
+    try:
+        open_in_file_manager(target)
+    except OSError as exc:
+        raise ApiError(409, "reveal_failed", f"Could not open the file manager: {exc}") from exc
+    return {"ok": True}
+
+
 @router.post("/folder", status_code=201)
 def create_folder(body: FolderIn, request: Request, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
-    space = _space(ctx, db, user, body.scope, body.owner_id)
-    if not _may_write(ctx, user, body.scope):
-        raise ApiError(403, "forbidden", "You cannot create folders here.")
+    space = _space(user, body.scope)
     try:
         created = ctx.storage.make_folder(body.scope, space, body.path, body.name)
     except StorageError as exc:
@@ -225,9 +211,8 @@ def delete_file(
     db: Db,
     path: str = Query(..., min_length=1, max_length=1024),
     scope: Scope = "private",
-    owner_id: int | None = None,
 ) -> dict:
-    space = _space(ctx, db, user, scope, owner_id)
+    space = _space(user, scope)
     try:
         rel = clean_rel_path(path)
         target = ctx.storage.resolve(scope, space, rel)
@@ -235,11 +220,6 @@ def delete_file(
         raise ApiError(404, "not_found", "File not found.") from exc
     if not rel or not target.exists():
         raise ApiError(404, "not_found", "File not found.")
-    record = (
-        db.query(FileRecord).filter_by(scope=scope, space=space, rel_path=rel).one_or_none()
-    )
-    if not _may_delete(ctx, user, scope, record, target.is_dir()):
-        raise ApiError(403, "forbidden", "You can only delete files you added.")
     escaped = rel.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     db.query(FileRecord).filter(
         FileRecord.scope == scope,

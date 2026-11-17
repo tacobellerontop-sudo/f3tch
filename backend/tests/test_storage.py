@@ -91,67 +91,57 @@ def test_file_types():
 
 
 @pytest.fixture
-def populated(admin, user, fileserver):
-    """admin owns ``admin.bin``; alice owns ``alice.bin``; one shared file from alice."""
+def populated(admin, fileserver):
+    """``admin.bin`` in the local profile's folder and one file in the shared folder."""
     fileserver.add("admin.bin", payload(1000))
-    fileserver.add("alice.bin", payload(2000))
     fileserver.add("shared.bin", payload(3000))
     admin.wait_state(admin.submit(fileserver.url("file", "admin.bin"))["created"][0]["id"], "completed")
-    user.wait_state(user.submit(fileserver.url("file", "alice.bin"))["created"][0]["id"], "completed")
-    user.wait_state(
-        user.submit(fileserver.url("file", "shared.bin"), destination="shared")["created"][0]["id"], "completed"
+    admin.wait_state(
+        admin.submit(fileserver.url("file", "shared.bin"), destination="shared")["created"][0]["id"], "completed"
     )
-    return admin, user, fileserver
+    return admin, None, fileserver
 
 
-def test_each_user_sees_only_their_own_private_files(populated):
-    admin, user, _ = populated
-    assert [i["name"] for i in admin.get("/files").json()["items"]] == ["admin.bin"]
-    listing = user.get("/files").json()
-    assert [i["name"] for i in listing["items"]] == ["alice.bin"]
+def test_listing_shows_downloaded_files_with_their_source(populated):
+    admin, _, _ = populated
+    listing = admin.get("/files").json()
+    assert [i["name"] for i in listing["items"]] == ["admin.bin"]
     item = listing["items"][0]
-    assert item["size"] == 2000 and item["provider"] == "direct" and item["downloaded_at"]
-    assert item["source_url"].endswith("/file/alice.bin")
+    assert item["size"] == 1000 and item["provider"] == "direct" and item["downloaded_at"]
+    assert item["source_url"].endswith("/file/admin.bin")
 
 
-def test_user_cannot_reach_another_users_files(populated):
-    admin, user, _ = populated
-    admin_id = admin.user["id"]
-    assert user.get("/files", params={"owner_id": admin_id}).status_code == 404
-    assert user.get("/files/download", params={"path": "admin.bin", "owner_id": admin_id}).status_code == 404
-    assert user.get("/files/download", params={"path": "admin.bin"}).status_code == 404
-    assert user.delete("/files", params={"path": "admin.bin", "owner_id": admin_id}).status_code == 404
-    for attempt in (f"../{admin_id}/admin.bin", f"..%2F{admin_id}%2Fadmin.bin", "/etc/passwd", "..\\..\\data\\fetch.db"):
-        assert user.get("/files/download", params={"path": attempt}).status_code == 404
-        assert user.get("/files", params={"path": attempt}).status_code == 404
+def test_paths_cannot_leave_the_storage_folder(populated):
+    admin, _, _ = populated
+    for attempt in ("../0/admin.bin", "..%2Fshared%2Fshared.bin", "/etc/passwd", "..\\..\\data\\fetch.db"):
+        assert admin.get("/files/download", params={"path": attempt}).status_code == 404
+        assert admin.get("/files", params={"path": attempt}).status_code == 404
+        assert admin.delete("/files", params={"path": attempt}).status_code == 404
     assert admin.get("/files/download", params={"path": "admin.bin"}).status_code == 200
 
 
-def test_admin_can_browse_a_users_files(populated):
-    admin, user, _ = populated
-    listing = admin.get("/files", params={"owner_id": user.user["id"]}).json()
-    assert [i["name"] for i in listing["items"]] == ["alice.bin"]
-    assert admin.get("/files", params={"owner_id": 9999}).status_code == 404
+def test_reveal_shows_files_in_the_file_manager_without_leaving_storage(populated, monkeypatch):
+    from fetch_app.api import files
+
+    admin, _, _ = populated
+    shown = []
+    monkeypatch.setattr(files, "open_in_file_manager", shown.append)
+    assert admin.post("/files/reveal", json={"path": "admin.bin"}).json() == {"ok": True}
+    assert admin.post("/files/reveal", json={"path": ""}).status_code == 200
+    assert shown[0].name == "admin.bin" and shown[0].is_file()
+    assert shown[1].is_dir() and shown[1] == shown[0].parent
+    for attempt in ("../0/shared.bin", "/etc/passwd", "missing.bin"):
+        assert admin.post("/files/reveal", json={"path": attempt}).status_code == 404
+    assert len(shown) == 2
 
 
-def test_shared_space_rules(populated):
-    admin, user, _ = populated
-    token = admin.invite()
-    bob = admin.fork()
-    bob.register(token, "bob")
-    listing = bob.get("/files", params={"scope": "shared"}).json()
-    item = listing["items"][0]
-    assert item["name"] == "shared.bin" and item["owner"] == "alice"
-    assert item["can_delete"] is False and item["source_url"] == ""
-    assert bob.get("/files/download", params={"scope": "shared", "path": "shared.bin"}).status_code == 200
-    assert bob.delete("/files", params={"scope": "shared", "path": "shared.bin"}).status_code == 403
-    assert user.delete("/files", params={"scope": "shared", "path": "shared.bin"}).status_code == 200
-
-    admin.put("/settings", json={"storage": {"users_can_write_shared": False}})
-    refused = bob.post("/downloads", json={"urls": ["https://example.com/x"], "destination": "shared"})
-    assert refused.status_code == 403
-    admin.put("/settings", json={"storage": {"shared_enabled": False}})
-    assert bob.get("/files", params={"scope": "shared"}).status_code == 403
+def test_shared_folder_of_earlier_versions_stays_reachable(populated):
+    admin, _, _ = populated
+    listing = admin.get("/files", params={"scope": "shared"}).json()
+    assert [i["name"] for i in listing["items"]] == ["shared.bin"]
+    assert admin.get("/files/usage").json()["shared"]["used_bytes"] == 3000
+    assert admin.get("/files/download", params={"scope": "shared", "path": "shared.bin"}).status_code == 200
+    assert admin.delete("/files", params={"scope": "shared", "path": "shared.bin"}).status_code == 200
 
 
 def test_download_is_always_an_attachment(populated):
@@ -183,12 +173,11 @@ def test_large_file_is_streamed_not_buffered(admin, boot):
 
     # Talk to the ASGI app directly: the test client's own transport may
     # buffer a whole response, which would hide how the server sends it.
-    cookies = "; ".join(f"{name}={value}" for name, value in admin.client.cookies.items())
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http",
         "path": "/api/files/download", "raw_path": b"/api/files/download", "root_path": "",
-        "query_string": b"path=huge.bin", "server": ("testserver", 80), "client": ("127.0.0.1", 50000),
-        "headers": [(b"host", b"testserver"), (b"cookie", cookies.encode())],
+        "query_string": b"path=huge.bin", "server": ("127.0.0.1", 8787), "client": ("127.0.0.1", 50000),
+        "headers": [(b"host", b"127.0.0.1:8787")],
     }
     seen = {"status": 0, "length": 0, "received": 0, "largest": 0}
 
@@ -278,8 +267,9 @@ def test_folders_search_sort_filter_and_delete(admin, fileserver):
     assert usage["private"]["used_bytes"] == 0 and "disk" in usage
 
 
-def test_usage_hides_other_users_from_regular_users(populated):
-    _, user, _ = populated
-    usage = user.get("/files/usage").json()
-    assert usage["private"]["used_bytes"] == 2000
-    assert "users" not in usage and "disk" not in usage
+def test_usage_reports_the_storage_limit(populated):
+    admin, _, _ = populated
+    usage = admin.get("/files/usage").json()
+    assert usage["private"] == {"used_bytes": 1000, "limit_bytes": 0}
+    admin.put("/settings", json={"storage": {"max_storage_gb": 2}})
+    assert admin.get("/files/usage").json()["private"]["limit_bytes"] == 2 * 1024**3

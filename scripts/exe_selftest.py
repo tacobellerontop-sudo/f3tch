@@ -1,10 +1,12 @@
 """End-to-end check of the single-file executable, using only the standard library.
 
     python scripts/exe_selftest.py dist/FETCH.exe
+    python scripts/exe_selftest.py dist/FETCH.exe --desktop
 
 Copies the executable into an empty folder and then, like a person would:
-starts it, opens the dashboard, creates the administrator with the setup
-token, asks for updates, installs one, and stops FETCH. The "update" is
+starts it, opens the dashboard, checks that only this computer is answered,
+asks for updates, installs one, and stops FETCH. It runs with `--headless`
+(no window or tray icon), since a CI runner has no desktop. The "update" is
 served by a local stand-in for GitHub's releases API that offers the same
 executable as version 99.0.0, so the whole self-replacement runs for real:
 download, checksum, swap, restart.
@@ -13,7 +15,6 @@ download, checksum, swap, restart.
 from __future__ import annotations
 
 import hashlib
-import http.cookiejar
 import json
 import os
 import shutil
@@ -27,9 +28,6 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
-PASSWORD = "selftest-Passw0rd-42"
-
 
 def free_port() -> int:
     with socket.socket() as sock:
@@ -73,21 +71,17 @@ def fake_github(exe_bytes: bytes) -> tuple[ThreadingHTTPServer, str]:
 
 
 class Browser:
-    """A cookie-keeping client that sends the CSRF token like the dashboard does."""
+    """Calls the API the way the dashboard does (same origin, no sign-in)."""
 
     def __init__(self, base: str) -> None:
         self.base = base
-        self.csrf = ""
-        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
-    def call(self, method: str, path: str, body=None, timeout: float = 300):
+    def call(self, method: str, path: str, body=None, timeout: float = 300, headers=None):
         data = json.dumps(body).encode() if body is not None else (b"" if method != "GET" else None)
-        headers = {"Content-Type": "application/json", "Origin": self.base}
-        if self.csrf:
-            headers["X-CSRF-Token"] = self.csrf
+        headers = {"Content-Type": "application/json", "Origin": self.base, **(headers or {})}
         request = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
-            with self.opener.open(request, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read()
         except urllib.error.HTTPError as error:
             raise AssertionError(f"{method} {path} -> {error.code}: {error.read().decode(errors='replace')}") from None
@@ -112,8 +106,62 @@ def wait_for(what: str, check, seconds: float):
     raise AssertionError(f"Timed out waiting for {what}.")
 
 
+def clean_env(port: int) -> dict:
+    env = {name: value for name, value in os.environ.items() if not name.startswith("FETCH_")}
+    env["FETCH_PORT"] = str(port)
+    return env
+
+
+def desktop_check(source: Path) -> int:
+    home = Path(tempfile.mkdtemp(prefix="fetch-desktop-"))
+    exe = home / source.name
+    shutil.copy2(source, exe)
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    env = clean_env(port)
+    state_file = home / "data" / "window.json"
+
+    def state():
+        try:
+            return json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    process = subprocess.Popen([str(exe)], env=env, cwd=home)
+    try:
+        print("1. Double-click: the server starts inside the app")
+        wait_for("FETCH to start", lambda: health(base), 120)
+        print("2. The dashboard opens in FETCH's own window")
+        shown = wait_for("the window to load the dashboard", lambda: (lambda s: s if s and s.get("visible") else None)(state()), 120)
+        assert shown["mode"] == "window" and shown["renderer"] == "edgechromium", shown
+        print("3. Starting it again brings the same window forward")
+        second = subprocess.run([str(exe), "run"], env=env, cwd=home, capture_output=True, text=True, timeout=60)
+        assert second.returncode == 0, second
+        assert process.poll() is None, "the first FETCH stopped"
+        print("4. Stopping closes the window and ends the program")
+        subprocess.run([str(exe), "stop"], env=env, cwd=home, capture_output=True, timeout=60)
+        process.wait(timeout=60)
+        assert health(base) is None
+        print("Desktop check passed.")
+        return 0
+    except BaseException:
+        for name in ("logs/fetch.log",):
+            path = home / name
+            if path.is_file():
+                print(f"---- {name}")
+                print(path.read_text(errors="replace")[-6000:])
+        raise
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def main() -> int:
     source = Path(sys.argv[1]).resolve()
+    if "--desktop" in sys.argv[2:]:
+        return desktop_check(source)
     home = Path(tempfile.mkdtemp(prefix="fetch-selftest-"))
     exe = home / source.name
     shutil.copy2(source, exe)
@@ -136,7 +184,7 @@ def main() -> int:
         return result.stdout
 
     log = open(home / "selftest-console.log", "wb")
-    process = subprocess.Popen([str(exe), "run", "--no-browser"], env=env, cwd=home, stdout=log, stderr=subprocess.STDOUT)
+    process = subprocess.Popen([str(exe), "run", "--headless"], env=env, cwd=home, stdout=log, stderr=subprocess.STDOUT)
     try:
         print("1. Starting from an empty folder")
         first = wait_for("FETCH to start", lambda: health(base), 120)
@@ -146,12 +194,21 @@ def main() -> int:
         page = Browser(base).call("GET", "/")
         assert '<div id="root"' in page, "the dashboard was not served from the executable"
 
-        print("2. First-run setup with the token")
+        print("2. Opening the dashboard without an account")
         status = json.loads(cli("status"))
-        assert status["running"] and status["setup_required"] and status["setup_token"], status
+        assert status["running"] and status["bind_address"] == "127.0.0.1", status
         browser = Browser(base)
-        me = browser.call("POST", "/api/setup", {"setup_token": status["setup_token"], "username": "admin", "password": PASSWORD})
-        browser.csrf = me["csrf_token"]
+        assert browser.call("GET", "/api/bootstrap")["version"], "the dashboard could not load"
+        for refused in (
+            lambda: browser.call("GET", "/api/bootstrap", headers={"Host": "evil.example"}),
+            lambda: browser.call("POST", "/api/files/folder", {"name": "x"}, headers={"Origin": "http://evil.example"}),
+        ):
+            try:
+                refused()
+            except AssertionError as error:
+                assert "-> 403" in str(error), error
+            else:
+                raise AssertionError("a request from another site or host name was answered")
 
         print("3. Checking for updates")
         update = browser.call("GET", "/api/admin/update?refresh=true")
@@ -182,8 +239,6 @@ def main() -> int:
         assert any((home / "data" / "backups").iterdir()), "no database backup was made"
         assert not exe.with_name(exe.name + ".new").exists()
         again = Browser(base)
-        me = again.call("POST", "/api/auth/login", {"username": "admin", "password": PASSWORD})
-        again.csrf = me["csrf_token"]
         assert again.call("GET", "/api/admin/update")["last_run"]["state"] == "succeeded"
 
         print("5. Stopping")

@@ -9,6 +9,7 @@ import {
   FileText,
   Film,
   Folder,
+  FolderOpen,
   FolderPlus,
   Image as ImageIcon,
   Music,
@@ -38,10 +39,9 @@ import {
   useToast,
 } from "@/components/ui";
 import { api, buildUrl, errorMessage } from "@/lib/api";
-import { useMe } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDateTime } from "@/lib/format";
-import { useFiles, useStorageUsage, useUsers } from "@/lib/queries";
+import { useFiles, useStorageUsage } from "@/lib/queries";
 import type { FileItem } from "@/lib/types";
 
 type Scope = "private" | "shared";
@@ -59,17 +59,13 @@ const TYPE_ICONS: Record<string, ReactNode> = {
 const TYPES = ["video", "audio", "image", "archive", "document", "application", "other"];
 
 export function FilesPage() {
-  const me = useMe();
   const toast = useToast();
   const client = useQueryClient();
   const openAdd = useAddDownload();
-  const isAdmin = me.user.role === "admin";
   const [params, setParams] = useSearchParams();
 
   const scope: Scope = params.get("scope") === "shared" ? "shared" : "private";
   const path = params.get("path") ?? "";
-  const ownerParam = Number(params.get("owner")) || null;
-  const ownerId = isAdmin && scope === "private" && ownerParam && ownerParam !== me.user.id ? ownerParam : null;
   const type = params.get("type") ?? "";
   const sort = (params.get("sort") as SortKey | null) ?? "name";
   const order = params.get("order") === "desc" ? "desc" : "asc";
@@ -96,11 +92,10 @@ export function FilesPage() {
   };
 
   const usage = useStorageUsage();
-  const users = useUsers(isAdmin);
-  const sharedEnabled = usage.data?.shared.enabled ?? false;
-  const listing = useFiles({ scope, path, q, type, sort, order, owner_id: ownerId });
+  // The shared folder belongs to earlier versions; it is shown while it still holds files.
+  const hasShared = (usage.data?.shared.used_bytes ?? 0) > 0;
+  const listing = useFiles({ scope, path, q, type, sort, order });
   const items = listing.data?.items ?? [];
-  const canWrite = listing.data?.can_write ?? false;
 
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("");
@@ -108,11 +103,11 @@ export function FilesPage() {
 
   const refresh = () => {
     void client.invalidateQueries({ queryKey: ["files"] });
-    void client.invalidateQueries({ queryKey: ["me"] });
+    void client.invalidateQueries({ queryKey: ["bootstrap"] });
   };
 
   const createFolder = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; name: string }>("/files/folder", { scope, path, name: folderName.trim(), owner_id: ownerId }),
+    mutationFn: () => api.post<{ ok: boolean; name: string }>("/files/folder", { scope, path, name: folderName.trim() }),
     onSuccess: (result) => {
       toast.success(`Created folder ${result.name}.`);
       setFolderOpen(false);
@@ -122,13 +117,19 @@ export function FilesPage() {
   });
 
   const remove = useMutation({
-    mutationFn: (item: FileItem) => api.delete<{ ok: boolean }>("/files", { path: item.path, scope, owner_id: ownerId }),
+    mutationFn: (item: FileItem) => api.delete<{ ok: boolean }>("/files", { path: item.path, scope }),
     onSuccess: (_result, item) => {
       toast.success(`Deleted ${item.name}.`);
       refresh();
     },
     onError: (error) => toast.error(error),
     onSettled: () => setTarget(null),
+  });
+
+  // The files are on this computer: show them where they are.
+  const reveal = useMutation({
+    mutationFn: (target: string) => api.post<{ ok: boolean }>("/files/reveal", { scope, path: target }),
+    onError: (error) => toast.error(error),
   });
 
   const submitFolder = (event: FormEvent) => {
@@ -142,17 +143,11 @@ export function FilesPage() {
   };
 
   const crumbs = path ? path.split("/") : [];
-  const ownerName = ownerId ? users.data?.find((user) => user.id === ownerId)?.username ?? `User ${ownerId}` : "";
-  const rootLabel = scope === "shared" ? "Shared" : ownerId ? `${ownerName}'s files` : "My files";
-  const downloadHref = (item: FileItem) => buildUrl("/files/download", { path: item.path, scope, owner_id: ownerId });
+  const rootLabel = scope === "shared" ? "Shared" : "Files";
+  const downloadHref = (item: FileItem) => buildUrl("/files/download", { path: item.path, scope });
 
-  const usedHere =
-    scope === "shared"
-      ? usage.data?.shared.used_bytes
-      : ownerId
-        ? usage.data?.users?.find((user) => user.user_id === ownerId)?.used_bytes
-        : usage.data?.private.used_bytes;
-  const limit = scope === "private" && !ownerId ? usage.data?.private.limit_bytes ?? 0 : 0;
+  const usedHere = scope === "shared" ? usage.data?.shared.used_bytes : usage.data?.private.used_bytes;
+  const limit = scope === "private" ? usage.data?.private.limit_bytes ?? 0 : 0;
 
   const Th = ({ label, sortKey, className }: { label: string; sortKey?: SortKey; className?: string }) => (
     <th scope="col" className={cn("py-2 pr-4 text-left text-2xs font-medium uppercase tracking-wider text-subtle", className)}>
@@ -174,17 +169,18 @@ export function FilesPage() {
         description={
           usedHere === undefined
             ? "Completed downloads."
-            : `${formatBytes(usedHere)} used${limit > 0 ? ` of ${formatBytes(limit, 0)}` : ""} in ${rootLabel.toLowerCase()}.`
+            : `${formatBytes(usedHere)} used${limit > 0 ? ` of ${formatBytes(limit, 0)}` : ""}${scope === "shared" ? " in the shared folder" : ""}.`
         }
         actions={
           <>
-            {canWrite && (
-              <Button variant="secondary" icon={<FolderPlus className="h-4 w-4" />} onClick={() => setFolderOpen(true)}>
-                New folder
-              </Button>
-            )}
-            {canWrite && !ownerId && (
-              <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openAdd({ folder: path, destination: scope })}>
+            <Button variant="secondary" icon={<FolderOpen className="h-4 w-4" />} loading={reveal.isPending && reveal.variables === path} onClick={() => reveal.mutate(path)}>
+              Open folder
+            </Button>
+            <Button variant="secondary" icon={<FolderPlus className="h-4 w-4" />} onClick={() => setFolderOpen(true)}>
+              New folder
+            </Button>
+            {scope === "private" && (
+              <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openAdd({ folder: path })}>
                 Download here
               </Button>
             )}
@@ -193,7 +189,7 @@ export function FilesPage() {
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {(sharedEnabled || isAdmin || scope === "shared") && (
+        {(hasShared || scope === "shared") && (
           <Segmented
             label="Storage area"
             value={scope}
@@ -203,26 +199,10 @@ export function FilesPage() {
               setParams(value === "shared" ? new URLSearchParams({ scope: "shared" }) : new URLSearchParams());
             }}
             options={[
-              { value: "private", label: "Private" },
+              { value: "private", label: "Files" },
               { value: "shared", label: "Shared" },
             ]}
           />
-        )}
-        {isAdmin && scope === "private" && (
-          <Select
-            aria-label="Whose files"
-            value={ownerId ? String(ownerId) : ""}
-            onChange={(event) => setParams(event.target.value ? new URLSearchParams({ owner: event.target.value }) : new URLSearchParams())}
-          >
-            <option value="">My files</option>
-            {(users.data ?? [])
-              .filter((user) => user.id !== me.user.id)
-              .map((user) => (
-                <option key={user.id} value={String(user.id)}>
-                  {user.username}
-                </option>
-              ))}
-          </Select>
         )}
         <div className="relative min-w-[12rem] flex-1 sm:max-w-xs">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
@@ -284,9 +264,8 @@ export function FilesPage() {
                 <Th label="Size" sortKey="size" className="hidden w-24 text-right sm:table-cell" />
                 <Th label="Type" className="hidden w-28 md:table-cell" />
                 <Th label="Source" className="hidden w-32 lg:table-cell" />
-                {scope === "shared" && <Th label="Added by" className="hidden w-28 lg:table-cell" />}
                 <Th label="Modified" sortKey="modified" className="hidden w-40 md:table-cell" />
-                <th scope="col" className="w-20 py-2 pr-3">
+                <th scope="col" className="w-28 py-2 pr-3">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -319,26 +298,26 @@ export function FilesPage() {
                   <td className="hidden truncate py-2 pr-4 text-xs text-muted lg:table-cell" title={item.source_url || undefined}>
                     {item.provider ? providerLabel(item.provider) : "—"}
                   </td>
-                  {scope === "shared" && <td className="hidden truncate py-2 pr-4 text-xs text-muted lg:table-cell">{item.owner || "—"}</td>}
                   <td className="tabular hidden py-2 pr-4 text-xs text-subtle md:table-cell">{formatDateTime(item.downloaded_at ?? item.modified_at)}</td>
                   <td className="py-2 pr-3">
                     <div className="flex items-center justify-end gap-0.5">
+                      <Button variant="ghost" size="icon-sm" aria-label={`Show ${item.name} in its folder`} title="Show in folder" onClick={() => reveal.mutate(item.path)}>
+                        <FolderOpen className="h-3.5 w-3.5" />
+                      </Button>
                       {!item.is_dir && (
                         <a
                           href={downloadHref(item)}
                           download={item.name}
-                          aria-label={`Download ${item.name}`}
-                          title="Download to this device"
+                          aria-label={`Save a copy of ${item.name}`}
+                          title="Save a copy somewhere else"
                           className="inline-flex h-7 w-7 items-center justify-center rounded text-muted transition-colors hover:bg-raised hover:text-fg"
                         >
                           <DownloadIcon className="h-3.5 w-3.5" />
                         </a>
                       )}
-                      {item.can_delete && (
-                        <Button variant="ghost" size="icon-sm" aria-label={`Delete ${item.name}`} title="Delete" onClick={() => setTarget(item)}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
+                      <Button variant="ghost" size="icon-sm" aria-label={`Delete ${item.name}`} title="Delete" onClick={() => setTarget(item)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </td>
                 </tr>

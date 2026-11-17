@@ -145,32 +145,13 @@ def test_provider_settings_report_authentication_state(rapidgator):
     assert provider(api)["auth"]["status"] == "unavailable"
 
 
-def test_credentials_are_never_returned(rapidgator, user):
+def test_credentials_are_never_returned(rapidgator):
     api, _ = rapidgator
     secret = "premium-pass"
     api.put("/providers/rapidgator/credentials", json={"values": {"login": "premium@example.com", "password": secret}})
     api.post("/providers/rapidgator/test")
     for body in (api.get("/providers").text, api.get("/providers/rapidgator/errors").text):
         assert secret not in body and "premium@example.com" not in body
-
-
-@pytest.fixture
-def user(rapidgator):
-    api, _ = rapidgator
-    other = api.fork()
-    other.register(api.invite(), "alice")
-    return other
-
-
-def test_other_users_see_state_but_cannot_change_accounts(rapidgator, user):
-    api, _ = rapidgator
-    api.put("/providers/rapidgator/credentials",
-            json={"values": {"login": "premium@example.com", "password": "premium-pass"}})
-    seen = provider(user)
-    assert seen["auth"]["account_configured"] is True and seen["auth"]["status"] == "account"
-    assert "credential_fields_set" not in seen and "premium" not in json.dumps(seen["auth"])
-    assert user.put("/providers/rapidgator/auth-mode", json={"mode": "anonymous"}).status_code == 403
-    assert user.put("/providers/rapidgator/credentials", json={"values": {"login": "a", "password": "b"}}).status_code == 403
 
 
 # -- anonymous inspection and eligibility --------------------------------------------

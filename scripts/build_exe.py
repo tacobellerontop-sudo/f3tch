@@ -7,12 +7,18 @@ and a built web interface (`npm ci && npm run build` in frontend/). The result
 is dist/FETCH.exe (dist/FETCH on other systems) plus its SHA-256 file. The
 executable contains Python, FETCH and the web interface; it keeps its data in
 the folder it is started from.
+
+On Windows the executable is a windowed program: it opens the dashboard in its
+own window (pywebview with the WebView2 runtime) and keeps a tray icon
+(pystray). Commands such as `FETCH.exe status` still print to the terminal
+that started them.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import os
 import subprocess
 import sys
@@ -37,9 +43,28 @@ def main() -> int:
     def data(source: Path, target: str) -> str:
         return f"{source}{os.pathsep}{target}"
 
+    sys.path.insert(0, str(BACKEND))
+    from fetch_app.desktop import write_icon_file
+
+    def has(module: str) -> bool:
+        return importlib.util.find_spec(module) is not None
+
     with tempfile.TemporaryDirectory() as work:
+        icon = write_icon_file(Path(work) / "fetch.ico")
+        desktop: list[str] = []
+        if has("webview"):
+            # The window. pywebview loads its renderer by name and ships JS files.
+            desktop += ["--collect-submodules", "webview", "--collect-data", "webview"]
+            if has("clr_loader"):
+                desktop += ["--collect-all", "clr_loader", "--collect-all", "pythonnet"]
+        if has("pystray"):
+            desktop += ["--collect-submodules", "pystray"]
+        if os.name == "nt" and not desktop:
+            raise SystemExit("pywebview and pystray are missing. Run `pip install -r backend/requirements-build.txt`.")
         command = [
-            sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--console",
+            sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
+            "--windowed" if os.name == "nt" else "--console",
+            "--icon", str(icon),
             "--name", "FETCH",
             "--distpath", str(out), "--workpath", str(Path(work) / "build"), "--specpath", work,
             "--paths", str(BACKEND),
@@ -53,6 +78,7 @@ def main() -> int:
             "--collect-submodules", "alembic",
             "--hidden-import", "sqlalchemy.dialects.sqlite",
             "--hidden-import", "logging.config",
+            *desktop,
             "--exclude-module", "tkinter",
             "--exclude-module", "pytest",
             str(BACKEND / "fetch_exe.py"),

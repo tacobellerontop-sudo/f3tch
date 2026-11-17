@@ -17,107 +17,8 @@ UTCDateTime = Annotated[
     ),
 ]
 
-USERNAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$"
-
-
 class _Out(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
-
-# -- auth / users --------------------------------------------------------------
-
-
-class LoginIn(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1, max_length=256)
-
-
-class SetupIn(BaseModel):
-    setup_token: str = Field(min_length=1, max_length=200)
-    username: str = Field(pattern=USERNAME_PATTERN)
-    password: str = Field(min_length=1, max_length=256)
-    display_name: str = Field("", max_length=128)
-
-
-class RegisterIn(BaseModel):
-    token: str = Field("", max_length=200)
-    username: str = Field(pattern=USERNAME_PATTERN)
-    password: str = Field(min_length=1, max_length=256)
-    display_name: str = Field("", max_length=128)
-
-
-class PasswordChangeIn(BaseModel):
-    current_password: str = Field(min_length=1, max_length=256)
-    new_password: str = Field(min_length=1, max_length=256)
-
-
-class ProfileIn(BaseModel):
-    display_name: str | None = Field(None, max_length=128)
-    theme: Literal["", "dark", "light", "system"] | None = None
-
-
-class UserOut(_Out):
-    id: int
-    username: str
-    display_name: str
-    role: str
-    is_active: bool
-    theme: str
-    must_change_password: bool
-    created_at: UTCDateTime
-    last_login_at: UTCDateTime | None
-
-
-class SessionOut(_Out):
-    id: int
-    user_id: int
-    username: str = ""
-    created_at: UTCDateTime
-    last_seen_at: UTCDateTime
-    expires_at: UTCDateTime
-    ip_address: str
-    user_agent: str
-    current: bool = False
-
-
-class UserUpdateIn(BaseModel):
-    display_name: str | None = Field(None, max_length=128)
-    role: Literal["admin", "user"] | None = None
-    is_active: bool | None = None
-
-
-class QuotaIn(BaseModel):
-    max_concurrent: int = Field(ge=0, le=32)
-    max_storage_bytes: int = Field(ge=0)
-    max_file_bytes: int = Field(ge=0)
-    daily_downloads: int = Field(ge=0, le=100_000)
-    bandwidth_bps: int = Field(ge=0)
-    max_queued: int = Field(ge=0, le=100_000)
-
-
-class QuotaOut(_Out, QuotaIn):
-    pass
-
-
-class ResetPasswordIn(BaseModel):
-    new_password: str | None = Field(None, max_length=256)
-
-
-class InvitationIn(BaseModel):
-    role: Literal["admin", "user"] = "user"
-    note: str = Field("", max_length=200)
-    expires_hours: int | None = Field(None, ge=1, le=24 * 90)
-
-
-class InvitationOut(_Out):
-    id: int
-    role: str
-    note: str
-    created_at: UTCDateTime
-    expires_at: UTCDateTime
-    used_at: UTCDateTime | None
-    revoked: bool
-    status: str = ""
 
 
 # -- downloads -----------------------------------------------------------------
@@ -153,8 +54,6 @@ class SubmitIn(BaseModel):
 
 class DownloadOut(_Out):
     id: int
-    user_id: int
-    owner: str = ""
     url: str
     provider: str
     filename: str
@@ -181,9 +80,8 @@ class DownloadOut(_Out):
     finished_at: UTCDateTime | None
 
 
-def serialize_download(row: Download, owner: str | None = None) -> dict[str, Any]:
+def serialize_download(row: Download) -> dict[str, Any]:
     out = DownloadOut.model_validate(row)
-    out.owner = owner if owner is not None else (row.user.username if row.user else "")
     if row.state != "downloading":
         out.speed_bps = 0.0
     elif row.total_bytes and row.speed_bps > 0:
@@ -208,11 +106,15 @@ class ReorderIn(BaseModel):
 # -- files ---------------------------------------------------------------------
 
 
+class RevealIn(BaseModel):
+    scope: Literal["private", "shared"] = "private"
+    path: str = Field("", max_length=1024)
+
+
 class FolderIn(BaseModel):
     scope: Literal["private", "shared"] = "private"
     path: str = Field("", max_length=1024)
     name: str = Field(min_length=1, max_length=200)
-    owner_id: int | None = None
 
 
 # -- providers -----------------------------------------------------------------

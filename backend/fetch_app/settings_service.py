@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import threading
 from typing import Any, Literal
 
@@ -13,12 +12,12 @@ from .db import Database
 from .models import AppSetting
 
 GB = 1024**3
+#: FETCH is a local application: it only ever listens on this computer.
+LOCAL_ADDRESS = "127.0.0.1"
 
 # Fields that only take effect after FETCH is restarted.
 RESTART_REQUIRED = {
-    "network.bind_address",
     "network.port",
-    "network.cors_origins",
     "storage.storage_root",
     "downloads.use_aria2",
     "downloads.aria2_path",
@@ -36,11 +35,14 @@ class GeneralSettings(_Section):
     default_destination: Literal["private", "shared"] = "private"
     # Look for a newer release on GitHub now and then (one anonymous request).
     check_for_updates: bool = True
+    # Closing the window keeps FETCH downloading, with an icon in the notification area.
+    close_to_tray: bool = True
 
 
 class DownloadSettings(_Section):
     max_global_concurrent: int = Field(3, ge=1, le=32)
-    max_per_user_concurrent: int = Field(2, ge=1, le=32)
+    # Combined speed limit of all downloads in KiB/s; 0 means unlimited.
+    speed_limit_kbps: int = Field(0, ge=0, le=100_000_000)
     retry_count: int = Field(3, ge=0, le=20)
     retry_delay_seconds: int = Field(30, ge=1, le=3600)
     default_priority: int = Field(1, ge=0, le=3)
@@ -57,8 +59,6 @@ class StorageSettings(_Section):
     temp_cleanup_hours: int = Field(72, ge=1, le=24 * 365)
     auto_delete_days: int = Field(0, ge=0, le=3650)
     history_retention_days: int = Field(0, ge=0, le=3650)
-    shared_enabled: bool = True
-    users_can_write_shared: bool = True
 
     @field_validator("storage_root")
     @classmethod
@@ -70,23 +70,9 @@ class StorageSettings(_Section):
 
 
 class NetworkSettings(_Section):
-    # Empty / 0 mean "use the value from config/fetch.toml".
-    bind_address: str = Field("", max_length=64)
+    # 0 means "use the port from config/fetch.toml". FETCH always listens on
+    # this computer only (127.0.0.1); there is no address setting.
     port: int = Field(0, ge=0, le=65535)
-    trusted_proxies: list[str] = Field(default_factory=list, max_length=32)
-    cors_origins: list[str] = Field(default_factory=list, max_length=32)
-    public_url: str = Field("", max_length=300)
-
-    @field_validator("bind_address")
-    @classmethod
-    def _bind(cls, value: str) -> str:
-        value = value.strip()
-        if value:
-            try:
-                ipaddress.ip_address(value)
-            except ValueError as exc:
-                raise ValueError("Bind address must be an IP address, e.g. 127.0.0.1.") from exc
-        return value
 
     @field_validator("port")
     @classmethod
@@ -94,64 +80,6 @@ class NetworkSettings(_Section):
         if value and value < 1024:
             raise ValueError("Port must be 0 (default) or between 1024 and 65535.")
         return value
-
-    @field_validator("trusted_proxies")
-    @classmethod
-    def _proxies(cls, value: list[str]) -> list[str]:
-        cleaned = []
-        for item in value:
-            item = item.strip()
-            if not item:
-                continue
-            try:
-                ipaddress.ip_network(item, strict=False)
-            except ValueError as exc:
-                raise ValueError(f"'{item}' is not an IP address or CIDR range.") from exc
-            cleaned.append(item)
-        return cleaned
-
-    @field_validator("cors_origins")
-    @classmethod
-    def _origins(cls, value: list[str]) -> list[str]:
-        cleaned = []
-        for item in value:
-            item = item.strip().rstrip("/")
-            if not item:
-                continue
-            if item == "*" or not item.startswith(("http://", "https://")):
-                raise ValueError("CORS origins must be explicit http(s) origins; '*' is not allowed.")
-            cleaned.append(item)
-        return cleaned
-
-    @field_validator("public_url")
-    @classmethod
-    def _public(cls, value: str) -> str:
-        value = value.strip().rstrip("/")
-        if value and not value.startswith(("http://", "https://")):
-            raise ValueError("Public URL must start with http:// or https://.")
-        return value
-
-
-class SecuritySettings(_Section):
-    session_hours: int = Field(168, ge=1, le=24 * 365)
-    invitations_required: bool = True
-    invitation_expiry_hours: int = Field(72, ge=1, le=24 * 90)
-    password_min_length: int = Field(10, ge=8, le=128)
-    password_require_mixed: bool = False
-    login_max_attempts: int = Field(5, ge=2, le=100)
-    login_window_minutes: int = Field(15, ge=1, le=1440)
-    login_lockout_minutes: int = Field(15, ge=1, le=1440)
-
-
-class QuotaDefaults(_Section):
-    """Limits applied to newly created regular users (0 = unlimited)."""
-
-    max_concurrent: int = Field(2, ge=0, le=32)
-    max_storage_gb: float = Field(50, ge=0, le=1_000_000)
-    max_file_gb: float = Field(0, ge=0, le=1_000_000)
-    daily_downloads: int = Field(0, ge=0, le=100_000)
-    bandwidth_kbps: int = Field(0, ge=0, le=100_000_000)
-    max_queued: int = Field(100, ge=0, le=100_000)
 
 
 class AppSettings(BaseModel):
@@ -161,8 +89,6 @@ class AppSettings(BaseModel):
     downloads: DownloadSettings = Field(default_factory=DownloadSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
-    security: SecuritySettings = Field(default_factory=SecuritySettings)
-    quota_defaults: QuotaDefaults = Field(default_factory=QuotaDefaults)
 
 
 class SettingsService:
@@ -186,7 +112,10 @@ class SettingsService:
         data: dict[str, Any] = {}
         for name in AppSettings.model_fields:
             if isinstance(stored.get(name), dict):
-                data[name] = stored[name]
+                # Fields saved by earlier versions (accounts, quotas, network
+                # exposure) no longer exist and are dropped.
+                known = AppSettings.model_fields[name].annotation.model_fields
+                data[name] = {key: value for key, value in stored[name].items() if key in known}
         try:
             return AppSettings.model_validate(data)
         except ValueError:
@@ -242,8 +171,7 @@ class SettingsService:
     # -- effective values that combine boot config and settings ---------------
 
     def effective_bind(self) -> tuple[str, int]:
-        net = self.get().network
-        return net.bind_address or self._boot.bind_address, net.port or self._boot.port
+        return LOCAL_ADDRESS, self.get().network.port or self._boot.port
 
     def effective_storage_root(self) -> str:
         return self.get().storage.storage_root or str(self._boot.storage_root)

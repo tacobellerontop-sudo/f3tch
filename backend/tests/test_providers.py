@@ -60,7 +60,7 @@ def test_every_provider_declares_capabilities_and_verification():
     assert "NOT verified against the live service" in by_id["rapidgator"].verification
 
 
-def test_provider_list_and_toggle(admin, user, fileserver):
+def test_provider_list_and_toggle(admin, fileserver):
     listed = {p["id"]: p for p in admin.get("/providers").json()}
     assert set(listed) == {"rapidgator", "mega", "pixeldrain", "gdrive", "direct"}
     assert listed["direct"]["ready"] is True
@@ -68,10 +68,10 @@ def test_provider_list_and_toggle(admin, user, fileserver):
     assert listed["gdrive"]["ready"] is False
     fileserver.add("a.bin", b"data")
     assert admin.patch("/providers/direct", json={"enabled": False}).json()["enabled"] is False
-    result = user.submit(fileserver.url("file", "a.bin"))
+    result = admin.submit(fileserver.url("file", "a.bin"))
     assert result["created"] == [] and result["rejected"][0]["code"] == "provider_disabled"
     admin.patch("/providers/direct", json={"enabled": True})
-    assert len(user.submit(fileserver.url("file", "a.bin"))["created"]) == 1
+    assert len(admin.submit(fileserver.url("file", "a.bin"))["created"]) == 1
 
 
 # -- Rapidgator --------------------------------------------------------------

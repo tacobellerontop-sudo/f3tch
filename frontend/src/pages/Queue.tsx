@@ -5,9 +5,8 @@ import { DownloadActions } from "@/components/downloads/actions";
 import { DownloadDetails } from "@/components/downloads/DownloadDetails";
 import { DownloadProgress, ProviderTag, speedText, StateBadge, useLive, WaitNote } from "@/components/downloads/parts";
 import { useAddDownload } from "@/components/layout/AppShell";
-import { Button, Card, EmptyState, ErrorNote, PageHeader, PageLoader, Segmented, Select, useToast } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorNote, PageHeader, PageLoader, Select, useToast } from "@/components/ui";
 import { errorMessage } from "@/lib/api";
-import { useMe } from "@/lib/auth";
 import { formatBytes, formatDuration, PRIORITIES, priorityLabel } from "@/lib/format";
 import { useDownloads, useReorder, useSetPriority } from "@/lib/queries";
 import type { Download } from "@/lib/types";
@@ -15,7 +14,7 @@ import type { Download } from "@/lib/types";
 const RUNNING = "inspecting,downloading,verifying";
 const WAITING = "pending,queued,waiting,paused";
 
-const RunningRow = memo(function RunningRow({ download, currentUserId, showOwner, onOpen }: { download: Download; currentUserId: number; showOwner: boolean; onOpen: (id: number) => void }) {
+const RunningRow = memo(function RunningRow({ download, onOpen }: { download: Download; onOpen: (id: number) => void }) {
   const live = useLive(download);
   return (
     <li className="flex items-center gap-4 px-4 py-3">
@@ -25,7 +24,6 @@ const RunningRow = memo(function RunningRow({ download, currentUserId, showOwner
         </button>
         <div className="mt-0.5 flex items-center gap-3 text-xs text-subtle">
           <ProviderTag id={download.provider} />
-          {showOwner && <span className="truncate">{download.owner}</span>}
         </div>
       </div>
       <div className="hidden w-56 sm:block">
@@ -36,7 +34,7 @@ const RunningRow = memo(function RunningRow({ download, currentUserId, showOwner
         <div className="text-subtle">{download.state === "downloading" ? `${formatDuration(live.eta)} left` : ""}</div>
       </div>
       <StateBadge state={download.state} />
-      <DownloadActions download={download} currentUserId={currentUserId} />
+      <DownloadActions download={download} />
     </li>
   );
 });
@@ -46,17 +44,13 @@ interface QueueRowProps {
   index: number;
   rank: number;
   count: number;
-  canEdit: boolean;
-  isAdmin: boolean;
-  showOwner: boolean;
   busy: boolean;
-  currentUserId: number;
   onMove: (index: number, to: number) => void;
   onPriority: (download: Download, priority: number) => void;
   onOpen: (id: number) => void;
 }
 
-function QueueRow({ download, index, rank, count, canEdit, isAdmin, showOwner, busy, currentUserId, onMove, onPriority, onOpen }: QueueRowProps) {
+function QueueRow({ download, index, rank, count, busy, onMove, onPriority, onOpen }: QueueRowProps) {
   const name = download.filename || download.url;
   return (
     <li className="flex items-center gap-3 px-4 py-2.5">
@@ -67,7 +61,6 @@ function QueueRow({ download, index, rank, count, canEdit, isAdmin, showOwner, b
         </button>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-subtle">
           <ProviderTag id={download.provider} />
-          {showOwner && <span className="truncate">{download.owner}</span>}
           {download.total_bytes ? <span className="tabular">{formatBytes(download.total_bytes)}</span> : null}
           <WaitNote download={download} />
           {download.state === "waiting" && download.wait_reason && <span className="truncate">{download.wait_reason}</span>}
@@ -80,41 +73,36 @@ function QueueRow({ download, index, rank, count, canEdit, isAdmin, showOwner, b
         aria-label={`Priority of ${name}`}
         className="hidden w-28 sm:inline-flex"
         value={download.priority}
-        disabled={!canEdit}
         onChange={(event) => onPriority(download, Number(event.target.value))}
       >
-        {PRIORITIES.filter((p) => isAdmin || p.value < 3 || download.priority === 3).map((p) => (
+        {PRIORITIES.map((p) => (
           <option key={p.value} value={p.value}>
             {p.label}
           </option>
         ))}
       </Select>
       <div className="flex items-center">
-        <Button variant="ghost" size="icon-sm" aria-label={`Move ${name} to the top`} title="Move to top" disabled={!canEdit || busy || index === 0} onClick={() => onMove(index, 0)}>
+        <Button variant="ghost" size="icon-sm" aria-label={`Move ${name} to the top`} title="Move to top" disabled={busy || index === 0} onClick={() => onMove(index, 0)}>
           <ChevronsUp className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon-sm" aria-label={`Move ${name} up`} title="Move up" disabled={!canEdit || busy || index === 0} onClick={() => onMove(index, index - 1)}>
+        <Button variant="ghost" size="icon-sm" aria-label={`Move ${name} up`} title="Move up" disabled={busy || index === 0} onClick={() => onMove(index, index - 1)}>
           <ArrowUp className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon-sm" aria-label={`Move ${name} down`} title="Move down" disabled={!canEdit || busy || index === count - 1} onClick={() => onMove(index, index + 1)}>
+        <Button variant="ghost" size="icon-sm" aria-label={`Move ${name} down`} title="Move down" disabled={busy || index === count - 1} onClick={() => onMove(index, index + 1)}>
           <ArrowDown className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <DownloadActions download={download} currentUserId={currentUserId} inline={false} />
+      <DownloadActions download={download} inline={false} />
     </li>
   );
 }
 
 export function QueuePage() {
-  const me = useMe();
   const toast = useToast();
   const openAdd = useAddDownload();
-  const isAdmin = me.user.role === "admin";
-  const [scope, setScope] = useState<"me" | "all">(isAdmin ? "all" : "me");
-  const owner = scope === "all" ? "" : "me";
 
-  const running = useDownloads({ state: RUNNING, sort: "created_at", order: "asc", page_size: 100, owner });
-  const waiting = useDownloads({ state: WAITING, sort: "queue", order: "asc", page_size: 200, owner });
+  const running = useDownloads({ state: RUNNING, sort: "created_at", order: "asc", page_size: 100 });
+  const waiting = useDownloads({ state: WAITING, sort: "queue", order: "asc", page_size: 200 });
   const reorder = useReorder();
   const setPriority = useSetPriority();
   const [openId, setOpenId] = useState<number | null>(null);
@@ -153,14 +141,9 @@ export function QueuePage() {
         title="Queue"
         description="Downloads start in this order: higher priority first, then top to bottom."
         actions={
-          <>
-            {isAdmin && (
-              <Segmented label="Scope" value={scope} onChange={setScope} options={[{ value: "all", label: "Everyone" }, { value: "me", label: "Mine" }]} />
-            )}
-            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openAdd()}>
-              Add download
-            </Button>
-          </>
+          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openAdd()}>
+            Add download
+          </Button>
         }
       />
 
@@ -180,7 +163,7 @@ export function QueuePage() {
           ) : (
             <ul className="divide-y divide-line">
               {runningItems.map((download) => (
-                <RunningRow key={download.id} download={download} currentUserId={me.user.id} showOwner={scope === "all"} onOpen={setOpenId} />
+                <RunningRow key={download.id} download={download} onOpen={setOpenId} />
               ))}
             </ul>
           )}
@@ -217,11 +200,7 @@ export function QueuePage() {
                         index={index}
                         rank={rank}
                         count={group.length}
-                        canEdit={isAdmin || download.user_id === me.user.id}
-                        isAdmin={isAdmin}
-                        showOwner={scope === "all"}
                         busy={reorder.isPending}
-                        currentUserId={me.user.id}
                         onMove={(from, to) => move(group, from, to)}
                         onPriority={changePriority}
                         onOpen={setOpenId}
@@ -236,7 +215,7 @@ export function QueuePage() {
         )}
       </section>
 
-      <DownloadDetails download={openDownload} currentUserId={me.user.id} showOwner={isAdmin} onClose={() => setOpenId(null)} />
+      <DownloadDetails download={openDownload} onClose={() => setOpenId(null)} />
     </>
   );
 }

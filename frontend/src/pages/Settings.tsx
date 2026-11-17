@@ -18,39 +18,31 @@ import {
   Segmented,
   Select,
   Switch,
-  Textarea,
   useToast,
 } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api";
-import { useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, PRIORITIES } from "@/lib/format";
-import { useHealth, useLogs, useMySessions, useSettings, useUpdateStatus } from "@/lib/queries";
+import { useHealth, useLogs, useSettings, useUpdateStatus } from "@/lib/queries";
 import { useTheme } from "@/lib/theme";
-import type { AppSettings, Me, SessionInfo, SettingsPayload, ThemeChoice } from "@/lib/types";
+import type { AppSettings, SettingsPayload, ThemeChoice } from "@/lib/types";
 
 import { UpdatesTab } from "./Updates";
-import { SessionTable } from "./Users";
 
 const TABS = [
-  { id: "account", label: "Account", admin: false },
-  { id: "general", label: "General", admin: true },
-  { id: "downloads", label: "Downloads", admin: true },
-  { id: "storage", label: "Storage", admin: true },
-  { id: "network", label: "Network", admin: true },
-  { id: "security", label: "Security", admin: true },
-  { id: "quotas", label: "Default quotas", admin: true },
-  { id: "updates", label: "Updates", admin: true },
-  { id: "diagnostics", label: "Diagnostics", admin: true },
-  { id: "logs", label: "Logs", admin: true },
+  { id: "general", label: "General" },
+  { id: "downloads", label: "Downloads" },
+  { id: "storage", label: "Storage" },
+  { id: "advanced", label: "Advanced" },
+  { id: "updates", label: "Updates" },
+  { id: "diagnostics", label: "Diagnostics" },
+  { id: "logs", label: "Logs" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
 const RESTART_LABELS: Record<string, string> = {
-  "network.bind_address": "Bind address",
   "network.port": "Port",
-  "network.cors_origins": "Allowed origins",
   "storage.storage_root": "Storage location",
   "downloads.use_aria2": "aria2 engine",
   "downloads.aria2_path": "aria2 path",
@@ -66,53 +58,32 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-// -- account ------------------------------------------------------------------
+// -- appearance ---------------------------------------------------------------
 
-function ProfileSection() {
-  const me = useMe();
-  const { signIn } = useAuth();
+function AppearanceSection() {
   const toast = useToast();
+  const client = useQueryClient();
   const { choice, setChoice } = useTheme();
-  const [name, setName] = useState(me.user.display_name);
 
   const save = useMutation({
-    mutationFn: (body: { display_name?: string; theme?: ThemeChoice }) => api.patch<Me>("/auth/me", body),
-    onSuccess: (result, body) => {
-      signIn(result);
-      if (body.display_name !== undefined) toast.success("Profile saved.");
-    },
+    mutationFn: (theme: ThemeChoice) => api.patch<{ theme: ThemeChoice }>("/preferences", { theme }),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["bootstrap"] }),
     onError: (error) => toast.error(error),
   });
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    save.mutate({ display_name: name });
-  };
-
   return (
-    <Section title="Profile">
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-        <Field label="Username" className="w-48">
-          {(props) => <Input {...props} value={me.user.username} readOnly disabled />}
-        </Field>
-        <Field label="Display name" className="min-w-[12rem] flex-1">
-          {(props) => <Input {...props} value={name} maxLength={128} onChange={(event) => setName(event.target.value)} />}
-        </Field>
-        <Button type="submit" variant="secondary" loading={save.isPending} disabled={name.trim() === me.user.display_name}>
-          Save
-        </Button>
-      </form>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+    <Section title="Appearance">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-[13px] font-medium text-fg">Theme</p>
-          <p className="text-xs text-subtle">Saved to your account and this browser.</p>
+          <p className="text-xs text-subtle">System follows the setting of this computer.</p>
         </div>
         <Segmented<ThemeChoice>
           label="Theme"
           value={choice}
           onChange={(value) => {
             setChoice(value);
-            save.mutate({ theme: value });
+            save.mutate(value);
           }}
           options={[
             { value: "dark", label: "Dark" },
@@ -125,101 +96,7 @@ function ProfileSection() {
   );
 }
 
-function PasswordSection() {
-  const me = useMe();
-  const { bootstrap, refresh } = useAuth();
-  const toast = useToast();
-  const client = useQueryClient();
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [repeat, setRepeat] = useState("");
-  const mismatch = repeat.length > 0 && next !== repeat;
-
-  const change = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; sessions_revoked: number }>("/auth/password", { current_password: current, new_password: next }),
-    onSuccess: (result) => {
-      toast.success(
-        result.sessions_revoked > 0
-          ? `Password changed. ${result.sessions_revoked} other session${result.sessions_revoked === 1 ? " was" : "s were"} signed out.`
-          : "Password changed.",
-      );
-      setCurrent("");
-      setNext("");
-      setRepeat("");
-      void refresh();
-      void client.invalidateQueries({ queryKey: ["me", "sessions"] });
-    },
-  });
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!mismatch) change.mutate();
-  };
-  const minLength = bootstrap?.password_min_length ?? 10;
-
-  return (
-    <Section
-      title="Password"
-      description={`At least ${minLength} characters${bootstrap?.password_require_mixed ? ", with upper and lower case letters and a digit" : ""}. Changing it signs out your other devices.`}
-    >
-      {me.user.must_change_password && <Notice tone="warning">An administrator reset your password. Choose a new one now.</Notice>}
-      <form onSubmit={submit} className="grid gap-4 sm:grid-cols-3">
-        <Field label="Current password">
-          {(props) => <Input {...props} type="password" autoComplete="current-password" required value={current} onChange={(event) => setCurrent(event.target.value)} />}
-        </Field>
-        <Field label="New password">
-          {(props) => <Input {...props} type="password" autoComplete="new-password" required minLength={minLength} value={next} onChange={(event) => setNext(event.target.value)} />}
-        </Field>
-        <Field label="Repeat new password" error={mismatch ? "The passwords do not match." : null}>
-          {(props) => <Input {...props} type="password" autoComplete="new-password" required value={repeat} onChange={(event) => setRepeat(event.target.value)} />}
-        </Field>
-        {change.isError && <ErrorNote className="sm:col-span-3">{errorMessage(change.error)}</ErrorNote>}
-        <div className="sm:col-span-3">
-          <Button type="submit" variant="primary" loading={change.isPending} disabled={!current || !next || !repeat || mismatch}>
-            Change password
-          </Button>
-        </div>
-      </form>
-    </Section>
-  );
-}
-
-function MySessionsSection() {
-  const { signOut } = useAuth();
-  const toast = useToast();
-  const client = useQueryClient();
-  const sessions = useMySessions();
-  const revoke = useMutation({
-    mutationFn: (session: SessionInfo) => api.delete<{ ok: boolean }>(`/auth/sessions/${session.id}`),
-    onSuccess: () => {
-      toast.success("That device was signed out.");
-      void client.invalidateQueries({ queryKey: ["me", "sessions"] });
-    },
-    onError: (error) => toast.error(error),
-  });
-  return (
-    <Card className="overflow-hidden">
-      <div className="px-5 pb-3 pt-5">
-        <h2 className="text-[13px] font-semibold text-fg">Signed-in devices</h2>
-        <p className="mt-1 text-xs text-muted">Revoke any session you do not recognise, then change your password.</p>
-      </div>
-      {sessions.isPending ? (
-        <PageLoader />
-      ) : sessions.isError ? (
-        <div className="p-4"><ErrorNote>{errorMessage(sessions.error)}</ErrorNote></div>
-      ) : (
-        <SessionTable
-          sessions={sessions.data}
-          showUser={false}
-          busy={revoke.isPending}
-          onRevoke={(session) => (session.current ? void signOut() : revoke.mutate(session))}
-        />
-      )}
-    </Card>
-  );
-}
-
-// -- admin settings forms -------------------------------------------------------
+// -- settings forms -----------------------------------------------------------
 
 type SectionKey = keyof AppSettings;
 
@@ -247,7 +124,7 @@ function SettingsForm<K extends SectionKey>({
   const [values, setValues] = useState<AppSettings[K]>(saved);
   const savedText = JSON.stringify(saved);
 
-  // Follow changes made elsewhere (another administrator, another tab).
+  // Follow changes made elsewhere (another window).
   useEffect(() => {
     setValues(JSON.parse(savedText) as AppSettings[K]);
   }, [savedText]);
@@ -325,65 +202,32 @@ function Text({ label, hint, value, onChange, placeholder, maxLength }: { label:
   );
 }
 
-function Lines({ label, hint, value, onChange, placeholder }: { label: string; hint?: ReactNode; value: string[]; onChange: (value: string[]) => void; placeholder?: string }) {
-  const [text, setText] = useState(value.join("\n"));
-  const joined = value.join("\n");
-  useEffect(() => {
-    setText((current) => (current.split("\n").map((line) => line.trim()).filter(Boolean).join("\n") === joined ? current : joined));
-  }, [joined]);
-  return (
-    <Field label={label} hint={hint}>
-      {(props) => (
-        <Textarea
-          {...props}
-          rows={3}
-          spellCheck={false}
-          placeholder={placeholder}
-          className="font-mono text-xs"
-          value={text}
-          onChange={(event) => {
-            setText(event.target.value);
-            onChange(event.target.value.split("\n").map((line) => line.trim()).filter(Boolean));
-          }}
-        />
-      )}
-    </Field>
-  );
-}
-
 const grid = "grid gap-4 sm:grid-cols-2";
 
 function GeneralTab({ payload }: { payload: SettingsPayload }) {
   return (
     <SettingsForm section="general" payload={payload} title="General">
       {({ values, set }) => (
-        <div className={grid}>
-          <Text label="Application name" hint="Shown in the sidebar and the browser tab." value={values.app_name} maxLength={40} onChange={(value) => set("app_name", value)} />
-          <Field label="Default theme" hint="Used until a person picks their own.">
-            {(props) => (
-              <Select {...props} className="w-full" value={values.theme} onChange={(event) => set("theme", event.target.value as ThemeChoice)}>
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-                <option value="system">Follow the device</option>
-              </Select>
-            )}
-          </Field>
-          <Field label="Language" hint="English is the only language included at the moment.">
-            {(props) => (
-              <Select {...props} className="w-full" value={values.language} onChange={(event) => set("language", event.target.value)}>
-                <option value="en">English</option>
-              </Select>
-            )}
-          </Field>
-          <Field label="Default destination" hint="Where new downloads are saved unless chosen otherwise.">
-            {(props) => (
-              <Select {...props} className="w-full" value={values.default_destination} onChange={(event) => set("default_destination", event.target.value as "private" | "shared")}>
-                <option value="private">Private folder of the user</option>
-                <option value="shared">Shared folder</option>
-              </Select>
-            )}
-          </Field>
-        </div>
+        <>
+          <div className={grid}>
+            <Text label="Application name" hint="Shown in the sidebar and the window title." value={values.app_name} maxLength={40} onChange={(value) => set("app_name", value)} />
+            <Field label="Language" hint="English is the only language included at the moment.">
+              {(props) => (
+                <Select {...props} className="w-full" value={values.language} onChange={(event) => set("language", event.target.value)}>
+                  <option value="en">English</option>
+                </Select>
+              )}
+            </Field>
+          </div>
+          <div className="space-y-4 border-t border-line pt-4">
+            <Switch
+              label="Keep running when the window is closed"
+              description="Downloads continue in the background. FETCH stays reachable from its icon near the clock, where it can also be quit."
+              checked={values.close_to_tray}
+              onChange={(value) => set("close_to_tray", value)}
+            />
+          </div>
+        </>
       )}
     </SettingsForm>
   );
@@ -395,8 +239,8 @@ function DownloadsTab({ payload }: { payload: SettingsPayload }) {
       {({ values, set }) => (
         <>
           <div className={grid}>
-            <Num label="Simultaneous downloads (server)" hint="Across all users." min={1} max={32} value={values.max_global_concurrent} onChange={(value) => set("max_global_concurrent", value)} />
-            <Num label="Simultaneous downloads (per user)" hint="A user's own quota can lower this." min={1} max={32} value={values.max_per_user_concurrent} onChange={(value) => set("max_per_user_concurrent", value)} />
+            <Num label="Simultaneous downloads" hint="The rest wait in the queue." min={1} max={32} value={values.max_global_concurrent} onChange={(value) => set("max_global_concurrent", value)} />
+            <Num label="Speed limit (KB/s)" hint="For all downloads together. 0 means no limit. Applies to downloads that start from now on." value={values.speed_limit_kbps} onChange={(value) => set("speed_limit_kbps", value)} />
             <Num label="Automatic retries" hint="For temporary errors only. 0 turns retries off." max={20} value={values.retry_count} onChange={(value) => set("retry_count", value)} />
             <Num label="Retry delay (seconds)" hint="Wait before each automatic retry." min={1} max={3600} value={values.retry_delay_seconds} onChange={(value) => set("retry_delay_seconds", value)} />
             <Field label="Default priority">
@@ -450,107 +294,29 @@ function StorageTab({ payload }: { payload: SettingsPayload }) {
             onChange={(value) => set("storage_root", value)}
           />
           <div className={grid}>
-            <Num label="Total storage limit (GB)" hint="For all users together. 0 means no limit." step={0.1} value={values.max_storage_gb} onChange={(value) => set("max_storage_gb", value)} />
+            <Num label="Total storage limit (GB)" hint="0 means no limit." step={0.1} value={values.max_storage_gb} onChange={(value) => set("max_storage_gb", value)} />
             <Num label="Clean up temporary files after (hours)" hint="Leftovers of removed downloads." min={1} value={values.temp_cleanup_hours} onChange={(value) => set("temp_cleanup_hours", value)} />
-            <Num label="Delete completed files after (days)" hint="0 keeps files until someone deletes them." max={3650} value={values.auto_delete_days} onChange={(value) => set("auto_delete_days", value)} />
+            <Num label="Delete completed files after (days)" hint="0 keeps files until you delete them." max={3650} value={values.auto_delete_days} onChange={(value) => set("auto_delete_days", value)} />
             <Num label="Keep history for (days)" hint="Finished entries and activity. 0 keeps everything." max={3650} value={values.history_retention_days} onChange={(value) => set("history_retention_days", value)} />
           </div>
-          <div className="space-y-4 border-t border-line pt-4">
-            <Switch label="Shared folder" description="A common area every signed-in user can browse and download from." checked={values.shared_enabled} onChange={(value) => set("shared_enabled", value)} />
-            <Switch label="Users may save to the shared folder" description="When off, only administrators can add or delete shared files." checked={values.users_can_write_shared} disabled={!values.shared_enabled} onChange={(value) => set("users_can_write_shared", value)} />
-          </div>
         </>
       )}
     </SettingsForm>
   );
 }
 
-function NetworkTab({ payload }: { payload: SettingsPayload }) {
-  const { bind_address: bind, port } = payload.effective;
-  const local = bind === "127.0.0.1" || bind === "::1";
-  return (
-    <div className="space-y-4">
-      <Section title="Remote access" description="How friends reach this server safely.">
-        <Notice tone={bind === "0.0.0.0" || bind === "::" ? "warning" : "info"}>
-          FETCH is listening on <code className="font-mono">{bind}:{port}</code>.{" "}
-          {local
-            ? "Only this computer can open it."
-            : bind === "0.0.0.0" || bind === "::"
-              ? "Every network this computer is connected to can reach it. Make sure the Windows firewall and your router do not expose this port to the internet."
-              : "Devices that can reach this address can open it."}
-        </Notice>
-        <ol className="list-decimal space-y-1.5 pl-5 text-xs leading-5 text-muted">
-          <li>Install Tailscale on this computer and on each friend's device, and share this machine with them (or add them to your tailnet).</li>
-          <li>
-            Keep the bind address at <code className="font-mono text-fg">127.0.0.1</code> and run{" "}
-            <code className="font-mono text-fg">tailscale serve --bg {port}</code>. Tailscale then publishes FETCH over HTTPS at this machine's tailnet name, to your tailnet only.
-          </li>
-          <li>
-            Set the public URL below to that address, and add <code className="font-mono text-fg">127.0.0.1</code> to the trusted proxies. Sign-in limits then see real client addresses and the session cookie is marked Secure.
-          </li>
-          <li>Create an invitation on the Users page and send the link.</li>
-        </ol>
-        <p className="text-xs leading-5 text-subtle">
-          Alternatively bind FETCH to this computer's Tailscale address (100.x.y.z). Do not forward the port on your router or publish it on the open internet.
-        </p>
-      </Section>
-      <SettingsForm section="network" payload={payload} title="Network" description={<>Bootstrap values live in <code className="font-mono text-fg">{payload.effective.config_file}</code>; values set here override them.</>}>
-        {({ values, set }) => (
-          <>
-            <div className={grid}>
-              <Text label="Bind address" hint="Empty uses the configuration file. Restart required." value={values.bind_address} placeholder={bind} maxLength={64} onChange={(value) => set("bind_address", value)} />
-              <Num label="Port" hint="0 uses the configuration file. Restart required." max={65535} value={values.port} onChange={(value) => set("port", value)} />
-            </div>
-            <Text label="Public URL" hint="The address friends use, for invitation links. Example: https://fetch.your-tailnet.ts.net" value={values.public_url} maxLength={300} onChange={(value) => set("public_url", value)} />
-            <Lines label="Trusted proxies" hint="One IP address or CIDR range per line. Only these may report the client address through X-Forwarded-For." value={values.trusted_proxies} placeholder="127.0.0.1" onChange={(value) => set("trusted_proxies", value)} />
-            <Lines label="Allowed cross-origin sites" hint="One origin per line. Leave empty unless another site must call the API. Wildcards are rejected. Restart required." value={values.cors_origins} placeholder="https://example.com" onChange={(value) => set("cors_origins", value)} />
-          </>
-        )}
-      </SettingsForm>
-    </div>
-  );
-}
-
-function SecurityTab({ payload }: { payload: SettingsPayload }) {
-  return (
-    <SettingsForm section="security" payload={payload} title="Security">
-      {({ values, set }) => (
-        <>
-          <Switch label="Require an invitation to register" description="Recommended. When off, anyone who can reach this server can create an account." checked={values.invitations_required} onChange={(value) => set("invitations_required", value)} />
-          {!values.invitations_required && <Notice tone="warning">Open registration is only reasonable on a private network you fully control.</Notice>}
-          <div className={grid}>
-            <Num label="Invitation validity (hours)" min={1} max={2160} value={values.invitation_expiry_hours} onChange={(value) => set("invitation_expiry_hours", value)} />
-            <Num label="Session length (hours)" hint="People are signed out after this long." min={1} max={8760} value={values.session_hours} onChange={(value) => set("session_hours", value)} />
-            <Num label="Minimum password length" min={8} max={128} value={values.password_min_length} onChange={(value) => set("password_min_length", value)} />
-          </div>
-          <Switch label="Require mixed characters" description="Upper and lower case letters and a digit." checked={values.password_require_mixed} onChange={(value) => set("password_require_mixed", value)} />
-          <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
-            <Num label="Failed sign-ins allowed" min={2} max={100} value={values.login_max_attempts} onChange={(value) => set("login_max_attempts", value)} />
-            <Num label="Within (minutes)" min={1} max={1440} value={values.login_window_minutes} onChange={(value) => set("login_window_minutes", value)} />
-            <Num label="Lock out for (minutes)" min={1} max={1440} value={values.login_lockout_minutes} onChange={(value) => set("login_lockout_minutes", value)} />
-          </div>
-        </>
-      )}
-    </SettingsForm>
-  );
-}
-
-function QuotasTab({ payload }: { payload: SettingsPayload }) {
+function AdvancedTab({ payload }: { payload: SettingsPayload }) {
+  const { port } = payload.effective;
   return (
     <SettingsForm
-      section="quota_defaults"
+      section="network"
       payload={payload}
-      title="Default quotas"
-      description="Applied to users created from now on. Existing users keep their limits; change those on the Users page. Zero means no limit."
+      title="Advanced"
+      description={<>FETCH runs on this computer only and is not reachable from other devices. The window talks to it at <code className="font-mono text-fg">127.0.0.1:{port}</code>.</>}
     >
       {({ values, set }) => (
         <div className={grid}>
-          <Num label="Simultaneous downloads" max={32} value={values.max_concurrent} onChange={(value) => set("max_concurrent", value)} />
-          <Num label="Queued downloads" value={values.max_queued} onChange={(value) => set("max_queued", value)} />
-          <Num label="Storage (GB)" step={0.1} value={values.max_storage_gb} onChange={(value) => set("max_storage_gb", value)} />
-          <Num label="Largest file (GB)" step={0.1} value={values.max_file_gb} onChange={(value) => set("max_file_gb", value)} />
-          <Num label="Downloads per 24 hours" value={values.daily_downloads} onChange={(value) => set("daily_downloads", value)} />
-          <Num label="Speed limit (KB/s)" value={values.bandwidth_kbps} onChange={(value) => set("bandwidth_kbps", value)} />
+          <Num label="Port" hint="Change it only if another program uses the same port. 0 uses the default. Restart required." max={65535} value={values.port} onChange={(value) => set("port", value)} />
         </div>
       )}
     </SettingsForm>
@@ -764,25 +530,23 @@ function LogsTab() {
 // -- page -------------------------------------------------------------------------
 
 export function SettingsPage() {
-  const me = useMe();
-  const isAdmin = me.user.role === "admin";
   const params = useParams();
-  const tab = (params.tab ?? "account") as TabId;
-  const settings = useSettings(isAdmin);
-  const tabs = TABS.filter((item) => isAdmin || !item.admin);
-  const updateAvailable = useUpdateStatus(isAdmin).data?.update_available ?? false;
+  const tab = (params.tab ?? "general") as TabId;
+  const settings = useSettings();
+  const tabs = TABS;
+  const updateAvailable = useUpdateStatus().data?.update_available ?? false;
 
   if (!tabs.some((item) => item.id === tab)) return <Navigate to="/settings" replace />;
   const payload = settings.data;
   const restart = payload?.restart_required ?? [];
-  const needsSettings = !["account", "updates", "diagnostics", "logs"].includes(tab);
+  const needsSettings = !["updates", "diagnostics", "logs"].includes(tab);
 
   return (
     <>
-      <PageHeader title="Settings" description={isAdmin ? "Your account and this server." : "Your account."} />
-      {isAdmin && restart.length > 0 && (
+      <PageHeader title="Settings" description="How FETCH looks and works on this computer." />
+      {restart.length > 0 && (
         <Notice tone="warning" className="mb-4">
-          Restart FETCH to apply: {restart.map((name) => RESTART_LABELS[name] ?? name).join(", ")}. Run <code className="font-mono">stop.ps1</code> and then <code className="font-mono">start.ps1</code>.
+          Restart FETCH to apply: {restart.map((name) => RESTART_LABELS[name] ?? name).join(", ")}. Quit FETCH from its icon near the clock, then start it again.
         </Notice>
       )}
       <div className="grid gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">
@@ -791,7 +555,7 @@ export function SettingsPage() {
             {tabs.map((item) => (
               <NavLink
                 key={item.id}
-                to={item.id === "account" ? "/settings" : `/settings/${item.id}`}
+                to={item.id === "general" ? "/settings" : `/settings/${item.id}`}
                 end
                 className={({ isActive }) =>
                   cn(
@@ -808,14 +572,8 @@ export function SettingsPage() {
             ))}
           </nav>
         )}
-        <div className={cn("min-w-0 space-y-4", tabs.length === 1 && "lg:col-span-2 lg:max-w-3xl")}>
-          {tab === "account" && (
-            <>
-              <ProfileSection />
-              <PasswordSection />
-              <MySessionsSection />
-            </>
-          )}
+        <div className={cn("min-w-0 space-y-4", "")}>
+          {tab === "general" && <AppearanceSection />}
           {tab === "diagnostics" && <DiagnosticsTab />}
           {tab === "updates" && <UpdatesTab />}
           {tab === "logs" && <LogsTab />}
@@ -829,9 +587,7 @@ export function SettingsPage() {
                 {tab === "general" && <GeneralTab payload={payload} />}
                 {tab === "downloads" && <DownloadsTab payload={payload} />}
                 {tab === "storage" && <StorageTab payload={payload} />}
-                {tab === "network" && <NetworkTab payload={payload} />}
-                {tab === "security" && <SecurityTab payload={payload} />}
-                {tab === "quotas" && <QuotasTab payload={payload} />}
+                {tab === "advanced" && <AdvancedTab payload={payload} />}
               </>
             ))}
         </div>

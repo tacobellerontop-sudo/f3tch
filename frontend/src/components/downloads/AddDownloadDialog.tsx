@@ -1,9 +1,8 @@
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button, Dialog, ErrorNote, Field, Input, Notice, Segmented, Select, Spinner, Textarea, useToast } from "@/components/ui";
+import { Button, Dialog, ErrorNote, Field, Input, Notice, Segmented, Spinner, Textarea, useToast } from "@/components/ui";
 import { errorMessage } from "@/lib/api";
-import { useMe } from "@/lib/auth";
 import { formatBytes, PRIORITIES } from "@/lib/format";
 import { useInspect, useSettingsDefaults, useSubmit } from "@/lib/queriesExtra";
 import type { LinkInfo, SubmitResult } from "@/lib/types";
@@ -29,19 +28,15 @@ interface Props {
   open: boolean;
   onClose: () => void;
   initialFolder?: string;
-  initialDestination?: "private" | "shared";
 }
 
-export function AddDownloadDialog({ open, onClose, initialFolder = "", initialDestination }: Props) {
-  const me = useMe();
+export function AddDownloadDialog({ open, onClose, initialFolder = "" }: Props) {
   const toast = useToast();
   const defaults = useSettingsDefaults();
   const inspect = useInspect();
   const submit = useSubmit();
-  const isAdmin = me.user.role === "admin";
 
   const [text, setText] = useState("");
-  const [destination, setDestination] = useState<"private" | "shared">("private");
   const [folder, setFolder] = useState("");
   const [priority, setPriority] = useState(1);
   const [inspected, setInspected] = useState<Record<string, LinkInfo>>({});
@@ -58,7 +53,6 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "", initialDe
     setInspected({});
     setResult(null);
     setFolder(initialFolder);
-    setDestination(initialDestination ?? defaults.destination);
     setPriority(defaults.priority);
     inspect.reset();
     submit.reset();
@@ -97,7 +91,7 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "", initialDe
   const onSubmit = () => {
     const accepted = rows.filter((row) => row.info?.supported).map((row) => row.url);
     submit.mutate(
-      { urls: accepted, destination, folder: folder.trim(), priority },
+      { urls: accepted, destination: "private", folder: folder.trim(), priority },
       {
         onSuccess: (data) => {
           if (data.rejected.length === 0) {
@@ -111,7 +105,7 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "", initialDe
     );
   };
 
-  const priorities = PRIORITIES.filter((p) => p.value < 3 || isAdmin).map((p) => ({ value: p.value, label: p.label }));
+  const priorities = PRIORITIES.map((p) => ({ value: p.value, label: p.label }));
 
   return (
     <Dialog
@@ -210,15 +204,7 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "", initialDe
             </ul>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
-            <Field label="Save to">
-              {(props) => (
-                <Select {...props} value={destination} onChange={(event) => setDestination(event.target.value as "private" | "shared")} className="w-full sm:w-44">
-                  <option value="private">My files</option>
-                  {defaults.sharedAllowed && <option value="shared">Shared folder</option>}
-                </Select>
-              )}
-            </Field>
+          <div>
             <Field label="Subfolder (optional)" hint="For example: movies/2024. It is created if needed.">
               {(props) => <Input {...props} value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="Top level" spellCheck={false} />}
             </Field>

@@ -53,7 +53,7 @@ def _adapter(ctx: AppContext, provider_id: str) -> ProviderAdapter:
 @router.get("")
 def list_providers(user: CurrentUser, ctx: Ctx, db: Db) -> list[dict]:
     rows = {row.id: row for row in db.query(Provider).all()}
-    return [_describe(a, rows.get(a.id), admin=user.is_admin, ctx=ctx) for a in ctx.registry.all()]
+    return [_describe(a, rows.get(a.id), admin=True, ctx=ctx) for a in ctx.registry.all()]
 
 
 @router.patch("/{provider_id}")

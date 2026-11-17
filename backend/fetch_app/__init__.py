@@ -1,3 +1,3 @@
-"""FETCH - self-hosted multi-user download manager."""
+"""FETCH - desktop download manager for your own PC."""
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"

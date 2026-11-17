@@ -21,20 +21,18 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 interface Props {
   download: Download | null;
-  currentUserId: number;
-  showOwner: boolean;
   onClose: () => void;
 }
 
-export function DownloadDetails({ download, currentUserId, showOwner, onClose }: Props) {
+export function DownloadDetails({ download, onClose }: Props) {
   return (
     <Dialog open={download !== null} onClose={onClose} title={download?.filename || "Download"} side>
-      {download && <Body download={download} currentUserId={currentUserId} showOwner={showOwner} />}
+      {download && <Body download={download} />}
     </Dialog>
   );
 }
 
-function Body({ download, currentUserId, showOwner }: { download: Download; currentUserId: number; showOwner: boolean }) {
+function Body({ download }: { download: Download }) {
   const live = useLive(download);
   const toast = useToast();
   const [captchaOpen, setCaptchaOpen] = useState(false);
@@ -51,7 +49,7 @@ function Body({ download, currentUserId, showOwner }: { download: Download; curr
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
         <StateBadge state={download.state} />
-        <DownloadActions download={download} currentUserId={currentUserId} />
+        <DownloadActions download={download} />
       </div>
       <DownloadProgress download={download} live={live} />
       {download.state === "waiting" && (
@@ -84,10 +82,9 @@ function Body({ download, currentUserId, showOwner }: { download: Download; curr
         <Row label="Engine">{download.engine === "aria2" ? "aria2 (multi-connection)" : download.engine === "native" ? "Native" : "—"}</Row>
         <Row label="Priority">{priorityLabel(download.priority)}</Row>
         <Row label="Destination">
-          {download.destination === "shared" ? "Shared folder" : "My files"}
+          {download.destination === "shared" ? "Shared folder" : "Files"}
           {download.folder ? ` / ${download.folder}` : ""}
         </Row>
-        {showOwner && <Row label="Owner">{download.owner}</Row>}
         <Row label="Added">{formatDateTime(download.created_at)}</Row>
         <Row label="Started">{formatDateTime(download.started_at)}</Row>
         <Row label="Finished">{formatDateTime(download.finished_at)}</Row>

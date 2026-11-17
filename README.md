@@ -1,15 +1,18 @@
 # FETCH
 
-FETCH is a self-hosted download manager for one Windows PC and a small group of
-people you trust. Paste links into a web dashboard; FETCH detects the provider,
-queues the downloads, shows live progress, and stores the finished files on the
-host computer, where each person can browse and retrieve their own.
+FETCH is a download manager for your Windows PC. Paste links into its window;
+FETCH detects the provider, queues the downloads, shows live progress, and
+stores the finished files on your computer.
 
-- Multi-user, with invitations, roles, per-user quotas and private storage
+- A desktop app: one `FETCH.exe`, its own window and a tray icon. No browser,
+  no accounts, nothing to set up
 - Queue with priorities, pause / resume / retry, and recovery after a restart
-- Live updates over a WebSocket (no polling, no fake progress)
+- Live progress (no polling, no fake progress)
 - Provider adapters: direct HTTP(S), Rapidgator, MEGA, Pixeldrain, Google Drive
-- Runs entirely on your machine; no cloud service, no telemetry
+- Runs entirely on your machine and only answers to it; no cloud service, no telemetry
+
+To give FETCH to a friend, send them `FETCH.exe`. Each copy is its own
+program with its own downloads.
 
 > **What FETCH does not do.** It never bypasses a provider's authentication,
 > Premium requirement, CAPTCHA, waiting period, quota or other access control.
@@ -22,9 +25,6 @@ host computer, where each person can browse and retrieve their own.
 - [Requirements](#requirements)
 - [Install (folder installation)](#install-folder-installation)
 - [Start and stop](#start-and-stop)
-- [First-time setup](#first-time-setup)
-- [Inviting friends](#inviting-friends)
-- [Remote access with Tailscale](#remote-access-with-tailscale)
 - [Providers](#providers)
 - [Using FETCH](#using-fetch)
 - [Storage layout](#storage-layout)
@@ -42,37 +42,43 @@ host computer, where each person can browse and retrieve their own.
    [latest release](https://github.com/tacobellerontop-sudo/f3tch/releases/latest).
 2. Put it in a folder of its own, for example `C:\FETCH`. FETCH keeps
    everything next to the file: `config`, `data`, `logs` and `storage`.
-3. Double-click it. A window opens that says FETCH is running, and your
-   browser opens the dashboard with the first-time setup token filled in.
-   Choose the administrator's name and password and you are done.
+3. Double-click it. FETCH opens in its own window. That is all: there is no
+   account to create and nothing to sign in to.
 
-Nothing else has to be installed; Python and the web interface are inside the
-file. Keep the FETCH window open while you use FETCH: closing it (or pressing
-Ctrl+C in it) stops the server, and running downloads continue the next time
-you start it. Double-clicking `FETCH.exe` while it is already running just
-opens the dashboard.
+Nothing else has to be installed; Python and the interface are inside the
+file. The window uses Microsoft Edge WebView2, which Windows 10 and 11
+already have. On a PC without it, FETCH opens in your browser instead.
+
+**Closing the window** keeps FETCH running in the notification area (the tray
+icon next to the clock), so downloads continue. Click the tray icon to open
+the window again, or choose **Quit FETCH** from its menu to stop it. To quit
+when you close the window instead, switch off **Settings > General > Keep
+running when the window is closed**. Starting `FETCH.exe` while it is already running brings
+its window to the front. Downloads that were running when FETCH stopped
+continue the next time you start it.
+
+**Your files.** **Files > Open folder** opens the download folder in File
+Explorer, and the folder button next to a file shows it there.
 
 Windows may show "Windows protected your PC" the first time, because the
 file is not signed with a paid certificate. Choose **More info**, then **Run
 anyway**. To check the download, compare it with `FETCH.exe.sha256` from the
 same release: `Get-FileHash .\FETCH.exe`.
 
-Updates: **Settings > Updates > Install update** downloads the new
+**Updates:** **Settings > Updates > Install update** downloads the new
 `FETCH.exe`, verifies its checksum, backs up the database, replaces the file
-and restarts FETCH in a new window.
+and starts FETCH again.
 
 Commands, from PowerShell in that folder: `.\FETCH.exe status`,
-`.\FETCH.exe stop`, `.\FETCH.exe run --no-browser`,
-`.\FETCH.exe create-admin`. To use another port or allow other devices
-before the first start, set it later in **Settings > Network**, or edit
-`config\fetch.toml`. For aria2, put `aria2c.exe` in `tools\aria2\` next
-to `FETCH.exe` or install it system-wide.
+`.\FETCH.exe stop`, and `.\FETCH.exe run --headless` (no window or tray
+icon; the dashboard is then at <http://localhost:8787>). To use another port,
+change it in **Settings > Advanced**. For aria2, put `aria2c.exe` in
+`tools\aria2\` next to `FETCH.exe` or install it system-wide.
 
 The rest of this README describes the folder installation
-(`FETCH-<version>.zip` with PowerShell scripts), which adds a background
-service style start, a sign-in startup task and a scripted uninstall. The
-dashboard, providers, storage layout, backup and Tailscale sections apply to
-both.
+(`FETCH-<version>.zip` with PowerShell scripts), which runs FETCH from a
+Python environment and shows the dashboard in your browser. The providers,
+storage layout and backup sections apply to both.
 
 ## Requirements
 
@@ -118,7 +124,6 @@ Useful options:
 | Option | Effect |
 |---|---|
 | `-Port 9000` | Dashboard port (default 8787) |
-| `-BindAddress 127.0.0.1` | Address to listen on (default: this computer only) |
 | `-RegisterStartup` | Start FETCH automatically when you sign in to Windows |
 | `-SkipAria2` | Do not offer to install aria2 |
 | `-Yes` | Unattended: answer yes to every question |
@@ -144,68 +149,6 @@ task named "FETCH Download Manager" that starts FETCH when you sign in. It runs
 with your normal user rights; there is no Windows service and no stored
 password. `.\uninstall.ps1` removes it, or delete it in Task Scheduler.
 
-## First-time setup
-
-On the first visit the dashboard asks you to create the administrator account.
-For that it needs the **setup token** that `install.ps1` and `start.ps1` print.
-This stops anyone else on your network from claiming a fresh installation. The
-token is useless once the administrator exists.
-
-If you prefer the command line:
-
-```powershell
-cd backend
-..\.venv\Scripts\python.exe -m fetch_app create-admin --username alice
-```
-
-## Inviting friends
-
-1. Sign in as administrator and open **Users**.
-2. Choose **Invite user**, optionally add a note, and create the link.
-3. Send the link to your friend. It works once and expires (72 hours by
-   default). They choose their own username and password.
-
-New users get the default quota from **Settings > Default quotas**. Adjust
-individual limits (storage, simultaneous downloads, speed, daily downloads,
-largest file) under **Users > Edit quota**.
-
-Registration without an invitation is off by default. Keep it that way unless
-FETCH is only reachable on a network you fully control.
-
-## Remote access with Tailscale
-
-FETCH is meant to be reached over a private network, not the public internet.
-[Tailscale](https://tailscale.com) gives you that with very little setup.
-
-Recommended setup (HTTPS, nothing exposed to the internet):
-
-1. Install Tailscale on the host PC and sign in. Each friend installs Tailscale
-   too. Either add them to your tailnet or use Tailscale's *Share* feature to
-   share just this machine with them.
-2. Leave FETCH listening on `127.0.0.1` (the default) and run on the host PC:
-
-   ```powershell
-   tailscale serve --bg 8787
-   ```
-
-   Tailscale now serves FETCH at `https://<pc-name>.<tailnet>.ts.net` with a
-   valid certificate, to members of your tailnet only.
-3. In **Settings > Network** set **Public URL** to that address (invitation
-   links then use it) and add `127.0.0.1` to **Trusted proxies**, so sign-in
-   rate limiting sees each person's real address. Session cookies are marked
-   `Secure` automatically when requests arrive over HTTPS.
-4. Create invitations and send the links.
-
-Alternative without HTTPS: set the bind address in **Settings > Network** to the
-PC's Tailscale IP (`100.x.y.z`, shown by `tailscale ip -4`), restart FETCH, and
-have friends open `http://100.x.y.z:8787`. Tailscale encrypts the traffic
-between devices. Allow the port for the Tailscale interface in Windows Firewall
-if asked.
-
-Do **not** forward the FETCH port on your router and do not bind to `0.0.0.0`
-on a network you do not control. Do not use `tailscale funnel`, which publishes
-a service to the whole internet.
-
 ## Providers
 
 | Provider | Works without setup | Needs | Notes |
@@ -216,8 +159,8 @@ a service to the whole internet.
 | Google Drive | No | Your own API key or service account | Publicly shared or explicitly shared files |
 | Rapidgator | Yes | Nothing for free downloads (you wait and complete Rapidgator's CAPTCHA yourself). Optionally your own Premium account | Free download flow, or the official API with an account |
 
-Credentials are entered under **Providers** by an administrator, encrypted at
-rest, and never shown again to anyone. Each provider card states exactly what
+Credentials are entered under **Providers**, encrypted at rest, and never
+shown again. Each provider card states exactly what
 is supported and how it was verified. Details, setup steps and limits are in
 [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
@@ -225,35 +168,37 @@ is supported and how it was verified. Details, setup steps and limits are in
 
 - **Add download**: paste one or many links (one per line). FETCH inspects
   each link first and shows the file name, size and provider, or the reason a
-  link cannot be added. Choose the private or shared folder, an optional
-  subfolder and a priority.
+  link cannot be added. Choose an optional subfolder and a priority.
 - **Downloads**: everything you added, with search, filters, sorting and bulk
   actions. Select a row for details, including the exact error of a failed job.
 - **Queue**: what runs next and in which order. Reorder within a priority or
   change the priority.
-- **Files**: browse finished downloads, retrieve them to your own device, or
-  delete them. Administrators can also browse other users' folders.
-- **Providers**, **Activity**, **Users**, **Settings**: capabilities and
-  credentials, the audit log, account management, and server configuration
-  with diagnostics and logs.
+- **Files**: browse finished downloads, show them in File Explorer, save a
+  copy elsewhere, or delete them.
+- **Providers**, **Activity**, **Settings**: capabilities and credentials,
+  the activity log, and settings with diagnostics and logs.
 
 ## Storage layout
 
 ```
 storage\
-  downloads\<user id>\  private files of each user
-  shared\               the shared folder (can be switched off)
-  temporary\            partial downloads (cleaned up automatically)
-data\fetch.db          users, history, settings, encrypted credentials
+  downloads\<n>\        your downloads (a number, 1 for most installations)
+  shared\              only present if an older FETCH with accounts saved files there
+  temporary\           partial downloads (cleaned up automatically)
+data\fetch.db          history, settings, encrypted credentials
 config\fetch.toml      bootstrap configuration and secrets (keep private)
 logs\fetch.log         structured log (JSON lines, rotated)
 ```
 
-A user can only ever reach files inside their own folder and the shared
-folder. Stored files are served as downloads and are never executed or
-rendered by the server. To keep downloads on another drive set **Settings >
-Storage > Storage location**, stop FETCH, move the existing `storage` folder
-there, and start FETCH again.
+Stored files are never executed or opened by FETCH itself. To keep downloads
+on another drive set **Settings > Storage > Storage location**, stop FETCH,
+move the existing `storage` folder there, and start FETCH again.
+
+**Coming from FETCH 1.x (with accounts).** The update keeps your downloads,
+history and provider credentials. The administrator's downloads become yours;
+other people's files stay in their numbered folders under `storage\downloads\`
+and can be moved by hand. Accounts, invitations, sessions and quotas are
+removed from the database.
 
 ## Updating
 
@@ -261,12 +206,11 @@ With `FETCH.exe`, use **Settings > Updates** as described under
 [Quick start](#quick-start-one-file), or stop FETCH and replace the file by
 hand. The rest of this section is about the folder installation.
 
-**From the dashboard.** An administrator opens **Settings > Updates**. The page
+**From the dashboard.** Open **Settings > Updates**. The page
 shows the installed version, whether a newer release exists on GitHub, and its
 release notes. **Install update** asks for confirmation, then stops FETCH,
 installs the release and starts it again; the page reconnects by itself. A dot
-on the Settings entry in the sidebar tells administrators when an update is
-waiting. Nothing is ever installed without that click, and the automatic check
+on the Settings entry in the sidebar tells you when an update is waiting. Nothing is ever installed without that click, and the automatic check
 can be switched off on the same page.
 
 **From PowerShell.** The dashboard runs the same script you can run yourself:
@@ -303,7 +247,7 @@ Everything that matters is in three places:
 
 | What | Where |
 |---|---|
-| Database (users, history, settings, encrypted provider credentials) | `data\fetch.db` |
+| Database (history, settings, encrypted provider credentials) | `data\fetch.db` |
 | Secrets, including the key that decrypts those credentials | `config\fetch.toml` |
 | Downloaded files | `storage\` (or your custom storage location) |
 
@@ -329,23 +273,26 @@ if you no longer need them.
 
 ## Security overview
 
-- Passwords are hashed with Argon2id. Sessions are opaque random tokens in
-  `HttpOnly`, `SameSite=Lax` cookies, stored hashed, with expiry and revocation.
-- State-changing requests need a CSRF token and a matching `Origin`.
-- Sign-in attempts are rate limited per account and per address.
-- Role checks happen on the server for every request and every WebSocket
-  event; users cannot see or control each other's downloads or private files.
+- FETCH listens on `127.0.0.1` only and answers only to requests from this
+  computer that name it as `localhost` or `127.0.0.1`. Requests carrying any
+  other host name are refused, which also defeats DNS rebinding.
+- State-changing requests and the live-update connection must come from
+  FETCH's own page: a request sent by another website open in a browser on
+  the same PC is refused (`Origin` check).
+- The local control channel (`FETCH.exe stop`, bringing the window forward)
+  needs a random token stored in `data\control.json`.
 - Download URLs are checked against private, loopback and link-local address
   ranges at connection time and on every redirect (SSRF protection). aria2 is
   forced through a local filtering proxy that applies the same rule.
-- File names and paths are sanitised; path traversal out of a user's folder is
-  refused.
+- File names and paths are sanitised; path traversal out of the storage
+  folder is refused.
 - Provider credentials are encrypted at rest (Fernet) and never returned by
   the API. Passwords, tokens and cookies are redacted from logs.
 - aria2's RPC interface listens on loopback only, with a random secret, and is
   never exposed through FETCH.
-- Cross-origin access is denied unless you list origins explicitly.
-- Administrative actions are recorded in the activity log.
+- Settings changes and maintenance actions are recorded in the activity log.
+
+There are no accounts: anyone who can use your Windows account can use FETCH.
 
 ## Troubleshooting
 
@@ -353,10 +300,9 @@ if you no longer need them.
 |---|---|
 | "running scripts is disabled on this system" | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then run the script again |
 | `start.ps1` says FETCH did not start | Run `.\start.ps1 -Foreground` to see why. Most often the port is in use: change `port` in `config\fetch.toml` or stop the other program |
-| The dashboard asks for a setup token | Run `.\start.ps1`; it prints the token until the administrator exists |
-| Forgot the administrator password | `cd backend`, then `..\.venv\Scripts\python.exe -m fetch_app create-admin --username rescue`, sign in and reset the other password under Users |
-| A friend cannot open the dashboard | Check that both devices are connected to Tailscale and that the address matches the setup you chose above |
-| "Sign in" works but every action fails with a CSRF or origin error | You are reaching FETCH through an address it does not know. Set **Public URL** in Settings > Network, or open it by the address shown at start |
+| FETCH opens in the browser instead of its own window | The Microsoft Edge WebView2 Runtime is missing. Install it from Microsoft and start FETCH again |
+| The window is gone but FETCH still runs | It is in the notification area next to the clock (maybe under the ^ arrow). Click it, or start `FETCH.exe` again |
+| The dashboard says "FETCH only answers to this computer" | Open it as `http://localhost:8787` (or your port). FETCH cannot be reached from other devices |
 | A link is rejected as "unsafe address" | The link points to a private or local address. If that is intended (a NAS on your LAN), add the host to `ssrf_allowlist` in `config\fetch.toml` and restart |
 | A Rapidgator download says "Needs you" | Rapidgator's free download asks for a CAPTCHA. Open the download and choose **Complete CAPTCHA**. FETCH shows it to you and never solves it. See [docs/PROVIDERS.md](docs/PROVIDERS.md#rapidgator) |
 | Rapidgator says "Premium only" | The file is Premium-only or over the free size limit, or the stored account is not Premium |
@@ -383,13 +329,15 @@ if you no longer need them.
   that only works on its own site, you complete the steps in your browser
   and paste the download address into FETCH.
 - Anything else that needs a browser login cannot be downloaded.
-- One server process, one SQLite database: built for a household or a group of
-  friends, not for hundreds of concurrent users.
+- FETCH is for the computer it runs on. It cannot be opened from a phone or
+  another PC, and there are no accounts.
 - `FETCH.exe` is built and tested on Windows by the automated checks: start
-  from an empty folder, first-run setup, update check, replacing itself with
-  a newer build, restart and stop. It is not code signed, so Windows
-  SmartScreen warns about it once. It has not been tried on a real desktop
-  by a person yet, where antivirus software may behave differently.
+  from an empty folder, refusing other host names and websites, update check,
+  replacing itself with a newer build, restart and stop, and opening its
+  window with WebView2, bringing it forward and closing it. It is not code
+  signed, so Windows SmartScreen warns about it once. It has not been tried
+  on a real desktop by a person yet, where antivirus software may behave
+  differently. The tray icon is not exercised by the automated checks.
 - The PowerShell scripts are run on Windows Server with Windows PowerShell 5.1
   by the automated checks (install, start, update, stop, uninstall). The
   winget prompts and the sign-in startup task have not been exercised.

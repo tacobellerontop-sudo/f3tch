@@ -1,6 +1,6 @@
 """Google Drive through the official Drive API v3 (authorized access only).
 
-FETCH does not scrape Drive's web download pages. An administrator supplies
+FETCH does not scrape Drive's web download pages. You supply
 either an API key (enough for files shared as "anyone with the link") or a
 service-account key (for files shared with that service account).
 """
@@ -164,8 +164,7 @@ class GoogleDriveProvider(ProviderAdapter):
             return {"X-Goog-Api-Key": creds["api_key"]}
         raise ProviderError(
             ErrorCode.AUTH_REQUIRED,
-            "Google Drive needs an API key or service account. Ask the administrator to "
-            "configure one under Providers.",
+            "Google Drive needs an API key or service account. Add one under Providers.",
         )
 
     @staticmethod

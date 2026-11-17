@@ -1,9 +1,8 @@
 import { History, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Card, EmptyState, ErrorNote, Input, PageHeader, PageLoader, Pagination, Segmented, Select } from "@/components/ui";
+import { Card, EmptyState, ErrorNote, Input, PageHeader, PageLoader, Pagination, Select } from "@/components/ui";
 import { errorMessage } from "@/lib/api";
-import { useMe } from "@/lib/auth";
 import { useActivity } from "@/lib/queries";
 
 import { ActivityList } from "./Overview";
@@ -13,15 +12,12 @@ const PAGE_SIZE = 50;
 const CATEGORIES = [
   { value: "download", label: "Downloads" },
   { value: "file", label: "Files" },
-  { value: "auth", label: "Sign-ins" },
   { value: "provider", label: "Providers" },
-  { value: "admin", label: "Administration", admin: true },
+  { value: "admin", label: "Settings and maintenance" },
+  { value: "system", label: "Starts and stops" },
 ];
 
 export function ActivityPage() {
-  const me = useMe();
-  const isAdmin = me.user.role === "admin";
-  const [scope, setScope] = useState<"me" | "all">(isAdmin ? "all" : "me");
   const [category, setCategory] = useState("");
   const [level, setLevel] = useState("");
   const [search, setSearch] = useState("");
@@ -36,32 +32,13 @@ export function ActivityPage() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  const activity = useActivity({ page, page_size: PAGE_SIZE, category, level, scope, q });
+  const activity = useActivity({ page, page_size: PAGE_SIZE, category, level, q });
   const items = activity.data?.items ?? [];
   const filtered = Boolean(category || level || q);
 
   return (
     <>
-      <PageHeader
-        title="Activity"
-        description={isAdmin && scope === "all" ? "Everything that happened on this server, including administrative changes." : "Your downloads, files and sign-ins."}
-        actions={
-          isAdmin ? (
-            <Segmented
-              label="Scope"
-              value={scope}
-              onChange={(value) => {
-                setScope(value);
-                setPage(1);
-              }}
-              options={[
-                { value: "all", label: "Everyone" },
-                { value: "me", label: "Mine" },
-              ]}
-            />
-          ) : undefined
-        }
-      />
+      <PageHeader title="Activity" description="Everything FETCH did: downloads, file changes and settings." />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[12rem] flex-1 sm:max-w-xs">
@@ -77,7 +54,7 @@ export function ActivityPage() {
           }}
         >
           <option value="">All categories</option>
-          {CATEGORIES.filter((item) => !item.admin || isAdmin).map((item) => (
+          {CATEGORIES.map((item) => (
             <option key={item.value} value={item.value}>
               {item.label}
             </option>
@@ -109,11 +86,11 @@ export function ActivityPage() {
           <EmptyState
             icon={<History className="h-5 w-5" />}
             title={filtered ? "Nothing matches these filters" : "No activity yet"}
-            description={filtered ? undefined : "Downloads, sign-ins and file changes are recorded here."}
+            description={filtered ? undefined : "Downloads, file changes and settings are recorded here."}
           />
         ) : (
           <>
-            <ActivityList items={items} showUser={isAdmin && scope === "all"} />
+            <ActivityList items={items} />
             <div className="border-t border-line">
               <Pagination page={page} pageSize={PAGE_SIZE} total={activity.data?.total ?? 0} onPage={setPage} />
             </div>

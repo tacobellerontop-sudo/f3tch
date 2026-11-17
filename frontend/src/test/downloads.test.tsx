@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parseUrls } from "@/components/downloads/AddDownloadDialog";
 import type { LinkInfo } from "@/lib/types";
 
-import { type Call, HttpFailure, makeDownload, makeMe, page, renderApp, signedIn } from "./harness";
+import { type Call, HttpFailure, local, makeDownload, page, renderApp } from "./harness";
 
 function inspected(url: string, overrides: Partial<LinkInfo> = {}): LinkInfo {
   return {
@@ -26,7 +26,7 @@ describe("adding downloads", () => {
   it("inspects pasted links, shows why one is refused and submits only the accepted one", async () => {
     const good = "https://files.example.com/movie.mkv";
     const bad = "https://mega.nz/folder/abc#def";
-    const { user, server } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user, server } = renderApp("/downloads", local({
       "POST /downloads/inspect": (call: Call) => ({
         items: (call.body as { urls: string[] }).urls.map((url) =>
           url === bad
@@ -51,14 +51,13 @@ describe("adding downloads", () => {
     await waitFor(() => expect(server.find("POST", "/downloads")).toHaveLength(1));
     const call = server.find("POST", "/downloads")[0];
     expect(call.body).toEqual({ urls: [good], destination: "private", folder: "", priority: 1 });
-    expect(call.headers["X-CSRF-Token"]).toBe("csrf-test-token");
     expect(await screen.findByText("1 download added to the queue.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   it("keeps the dialog open and reports links the server rejected (for example over quota)", async () => {
     const url = "https://files.example.com/huge.bin";
-    const { user } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user } = renderApp("/downloads", local({
       "POST /downloads/inspect": { items: [inspected(url)] },
       "POST /downloads": { created: [], rejected: [{ url, provider: "direct", code: "quota_exceeded", message: "Your storage quota would be exceeded." }] },
     }));
@@ -74,7 +73,7 @@ describe("adding downloads", () => {
   });
 
   it("cannot be submitted while no link is acceptable", async () => {
-    const { user } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user } = renderApp("/downloads", local({
       "POST /downloads/inspect": { items: [inspected("ftp://x/y", { supported: false, message: "Only http and https links are supported." })] },
     }));
     const main = within(await screen.findByRole("main"));
@@ -97,17 +96,17 @@ describe("download controls", () => {
   ];
 
   it("lists downloads with their state and error, and asks the API with the filters from the URL", async () => {
-    const { server } = renderApp("/downloads?state=active&provider=direct", signedIn(makeMe("user"), { "GET /downloads": page(rows) }));
+    const { server } = renderApp("/downloads?state=active&provider=direct", local({ "GET /downloads": page(rows) }));
     expect(await screen.findByText("running.iso")).toBeInTheDocument();
     expect(screen.getAllByText("The file was not found (it may have been removed).").length).toBeGreaterThan(0);
     const query = server.find("GET", "/downloads")[0].query;
     expect(query.get("state")).toBe("inspecting,downloading,verifying,waiting");
     expect(query.get("provider")).toBe("direct");
-    expect(query.get("owner")).toBe("me");
+    expect(query.has("owner")).toBe(false);
   });
 
   it("pauses, resumes and retries with one click", async () => {
-    const { user, server } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user, server } = renderApp("/downloads", local({
       "GET /downloads": page(rows),
       "POST /downloads/1/pause": { ...rows[0], state: "paused" },
       "POST /downloads/2/resume": { ...rows[1], state: "queued" },
@@ -124,7 +123,7 @@ describe("download controls", () => {
   });
 
   it("asks for confirmation before cancelling", async () => {
-    const { user, server } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user, server } = renderApp("/downloads", local({
       "GET /downloads": page(rows),
       "POST /downloads/1/cancel": { ...rows[0], state: "cancelled" },
     }));
@@ -138,7 +137,7 @@ describe("download controls", () => {
   });
 
   it("removes a finished download and deletes its file only when asked", async () => {
-    const { user, server } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user, server } = renderApp("/downloads", local({
       "GET /downloads": page(rows),
       "DELETE /downloads/4": { ok: true },
     }));
@@ -152,7 +151,7 @@ describe("download controls", () => {
   });
 
   it("applies bulk actions only to the selected downloads that allow them", async () => {
-    const { user, server } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user, server } = renderApp("/downloads", local({
       "GET /downloads": page(rows),
       "POST /downloads/bulk": (call: Call) => ({ done: (call.body as { ids: number[] }).ids, skipped: [] }),
     }));
@@ -166,7 +165,7 @@ describe("download controls", () => {
   });
 
   it("shows the server's reason when an action is refused", async () => {
-    const { user } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user } = renderApp("/downloads", local({
       "GET /downloads": page(rows),
       "POST /downloads/1/pause": new HttpFailure(409, "invalid_state", "A completed download cannot be paused."),
     }));
@@ -179,7 +178,7 @@ describe("download controls", () => {
       id: 9, filename: "archive.rar", provider: "rapidgator", state: "waiting", error_code: "captcha_required",
       wait_reason: "Waiting for you to complete the provider's CAPTCHA.", wait_until: new Date(Date.now() + 300_000).toISOString(),
     });
-    const { user, server } = renderApp("/downloads", signedIn(makeMe("user"), {
+    const { user, server } = renderApp("/downloads", local({
       "GET /downloads": page([waiting]),
       "GET /downloads/9/captcha": {
         download_id: 9, provider: "rapidgator", kind: "image", prompt: "Type the characters from Rapidgator's picture.",
@@ -204,7 +203,7 @@ describe("download controls", () => {
       makeDownload({ id: 2, filename: "second.bin", state: "queued", priority: 1 }),
       makeDownload({ id: 3, filename: "third.bin", state: "paused", priority: 1 }),
     ];
-    const { user, server } = renderApp("/queue", signedIn(makeMe("user"), {
+    const { user, server } = renderApp("/queue", local({
       "GET /downloads": (call: Call) => page(call.query.get("sort") === "queue" ? queued : []),
       "POST /downloads/reorder": { ok: true },
       "PATCH /downloads/2": { ...queued[1], priority: 2 },
@@ -216,7 +215,7 @@ describe("download controls", () => {
     expect(server.find("POST", "/downloads/reorder")[0].body).toEqual({ ids: [3, 1, 2] });
 
     const priority = screen.getByLabelText("Priority of second.bin");
-    expect(within(priority).queryByRole("option", { name: "Urgent" })).not.toBeInTheDocument();
+    expect(within(priority).getByRole("option", { name: "Urgent" })).toBeInTheDocument();
     await user.selectOptions(priority, "High");
     await waitFor(() => expect(server.find("PATCH", "/downloads/2")).toHaveLength(1));
     expect(server.find("PATCH", "/downloads/2")[0].body).toEqual({ priority: 2 });

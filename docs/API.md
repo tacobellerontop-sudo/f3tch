@@ -1,7 +1,8 @@
 # API reference
 
 The dashboard talks to the backend through a JSON REST API under `/api` and a
-WebSocket at `/api/ws`. The same API can be used by scripts.
+WebSocket at `/api/ws`. The same API can be used by scripts running on the
+same computer.
 
 An interactive, always up-to-date reference generated from the code (OpenAPI)
 is served by a running FETCH at **`/api/docs`**, and the schema at
@@ -9,46 +10,31 @@ is served by a running FETCH at **`/api/docs`**, and the schema at
 
 ## Conventions
 
-- **Authentication.** Sign in with `POST /api/auth/login`. The server sets an
-  `HttpOnly` session cookie (`fetch_session`). Send it with every request.
-- **CSRF.** Every request that changes something (`POST`, `PUT`, `PATCH`,
-  `DELETE`) must carry the header `X-CSRF-Token` with the `csrf_token` returned
-  by login, setup, register and `GET /api/auth/me`. Browsers must also send a
-  same-origin `Origin`.
+- **Local only.** FETCH listens on `127.0.0.1` and answers only to clients on
+  this computer whose `Host` header is `localhost` or a loopback address
+  (anything else gets `403 local_only`). There is no sign-in and no session.
+- **Origin.** Every request that changes something (`POST`, `PUT`, `PATCH`,
+  `DELETE`), and the WebSocket, must either carry no `Origin` header (scripts)
+  or an `Origin` equal to FETCH's own address. A request sent by another
+  website gets `403 bad_origin`.
 - **Errors.** Every error has the same shape and a stable `code`:
 
   ```json
   { "error": { "code": "invalid_state", "message": "A completed download cannot be paused." } }
   ```
 
-  Common codes: `not_authenticated` (401), `forbidden` (403), `not_found`
-  (404), `csrf_failed` / `bad_origin` (403), `rate_limited` (429),
+  Common codes: `local_only` / `bad_origin` (403), `not_found` (404),
   `invalid_state` (409), validation problems (422).
-- **Isolation.** A regular user only ever sees their own downloads and files.
-  Requests for another user's objects answer `404`, exactly as if they did not
-  exist. Endpoints marked *admin* answer `403` for regular users.
 - **Times** are UTC in ISO 8601. **Sizes** are bytes, **speeds** bytes per second.
 - **Lists** return `{ "items": [...], "total": n, "page": 1, "page_size": 50 }`.
 
-## Bootstrap and authentication
+## Bootstrap
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/health` | Liveness: `{ "status": "ok", "version": "..." }`. No authentication |
-| `GET /api/bootstrap` | Public facts the sign-in page needs: app name, whether setup or invitations are required, password policy |
-| `POST /api/setup` | First run only. Body `{ setup_token, username, password }`. Creates the administrator and signs in |
-| `POST /api/auth/login` | Body `{ username, password }`. Returns the session payload |
-| `POST /api/auth/logout` | Ends the current session |
-| `GET /api/auth/me` | Session payload: `{ user, csrf_token, quota: { limits, usage }, session_expires_at }` |
-| `PATCH /api/auth/me` | Body `{ display_name?, theme? }` |
-| `POST /api/auth/password` | Body `{ current_password, new_password }`. Signs out the account's other sessions |
-| `GET /api/auth/sessions` | The caller's active sessions |
-| `DELETE /api/auth/sessions/{id}` | Revoke one of the caller's other sessions |
-| `GET /api/auth/invitation/{token}` | Whether an invitation is valid |
-| `POST /api/auth/register` | Body `{ token, username, password, display_name? }`. The token is required unless open registration is enabled |
-
-Sign-in, setup, registration and password changes are rate limited; a locked
-out client receives `429` with `Retry-After`.
+| `GET /api/health` | Liveness: `{ "status": "ok", "version": "..." }` |
+| `GET /api/bootstrap` | What the dashboard needs to start: `{ app_name, version, default_theme, language, theme, usage }`. `usage` holds `storage_bytes`, `storage_limit_bytes`, `max_concurrent`, `active_downloads`, `open_downloads`, `downloads_today` |
+| `PATCH /api/preferences` | Body `{ theme: "dark" \| "light" \| "system" }` |
 
 ## Downloads
 
@@ -56,7 +42,7 @@ A download object:
 
 ```json
 {
-  "id": 12, "user_id": 2, "owner": "bob",
+  "id": 12,
   "url": "https://example.com/file.zip", "provider": "direct", "filename": "file.zip",
   "state": "downloading", "priority": 1, "position": 12,
   "destination": "private", "folder": "", "final_path": "",
@@ -76,30 +62,31 @@ invents them.
 | Method and path | Purpose |
 |---|---|
 | `POST /api/downloads/inspect` | Body `{ urls: [...] }`. Detects the provider of each link and fetches name and size. Nothing is queued. Returns `{ items: [{ url, provider, provider_name, supported, filename, size, resumable, restriction, message, premium_only, auth_mode }] }` |
-| `POST /api/downloads` | Body `{ urls: [...], destination?: "private" \| "shared", folder?, priority?: 0-3 }` (up to 100 links). Returns `{ created: [download], rejected: [{ url, provider, code, message }] }` |
-| `GET /api/downloads` | Query: `page`, `page_size`, `state` (comma separated), `provider`, `q`, `sort` (`created_at`, `filename`, `size`, `state`, `provider`, `priority`, `progress`, `finished_at`, `position`, `queue`), `order`, and for administrators `owner` (`me` or a user id; empty for everyone) |
-| `GET /api/downloads/stats?scope=me\|all` | Counters by state and current speed (`all` is admin only) |
+| `POST /api/downloads` | Body `{ urls: [...], folder?, priority?: 0-3 }` (up to 100 links). Returns `{ created: [download], rejected: [{ url, provider, code, message }] }` |
+| `GET /api/downloads` | Query: `page`, `page_size`, `state` (comma separated), `provider`, `q`, `sort` (`created_at`, `filename`, `size`, `state`, `provider`, `priority`, `progress`, `finished_at`, `position`, `queue`), `order` |
+| `GET /api/downloads/stats` | Counters by state and current speed |
 | `GET /api/downloads/{id}` | One download |
 | `POST /api/downloads/{id}/pause` | Also `resume`, `cancel`, `retry`. `409 invalid_state` when the action does not apply |
 | `GET /api/downloads/{id}/captcha` | The provider CAPTCHA this download is waiting on (state `waiting`, `error_code` `captcha_required`): `{ kind: "image" \| "external", prompt, has_image, page_url, accepts_download_url, attempt, expires_at }`. `404 no_captcha` otherwise |
 | `GET /api/downloads/{id}/captcha/image` | The provider's CAPTCHA picture, for `kind: "image"` |
-| `POST /api/downloads/{id}/captcha` | Body `{ answer }` (what the user typed for a picture CAPTCHA) or `{ download_url }` (the address the provider issued after the user completed its steps in their own browser). FETCH passes it on unchanged and never produces an answer itself |
-| `PATCH /api/downloads/{id}` | Body `{ priority }`. Priority 3 (urgent) is admin only |
+| `POST /api/downloads/{id}/captcha` | Body `{ answer }` (what you typed for a picture CAPTCHA) or `{ download_url }` (the address the provider issued after you completed its steps in your own browser). FETCH passes it on unchanged and never produces an answer itself |
+| `PATCH /api/downloads/{id}` | Body `{ priority }` (0 low to 3 urgent) |
 | `DELETE /api/downloads/{id}?delete_file=true\|false` | Remove from history; a running job is stopped first |
 | `POST /api/downloads/bulk` | Body `{ ids, action: "pause"\|"resume"\|"cancel"\|"retry"\|"remove", delete_files? }`. Returns `{ done, skipped }` |
 | `POST /api/downloads/reorder` | Body `{ ids }`: the given queued jobs take each other's positions in this order |
 
 ## Files
 
-`scope` is `private` (default) or `shared`. Administrators may add
-`owner_id` to address another user's private folder. Paths are relative to
-that folder; anything that would leave it is refused.
+Paths are relative to the download folder (`storage\downloads\<n>`);
+anything that would leave it is refused. `scope=shared` reaches the shared
+folder that FETCH 1.x (with accounts) could write to, while it holds files.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/files` | Query: `scope`, `path`, `q` (recursive search), `type` (`video`, `audio`, `image`, `archive`, `document`, `application`, `other`), `sort` (`name`, `size`, `modified`), `order`, `page`, `page_size`. Returns a list plus `scope`, `path`, `owner_id`, `can_write` |
-| `GET /api/files/usage` | Storage used and the caller's limit; administrators also get disk and per-user figures |
+| `GET /api/files` | Query: `scope`, `path`, `q` (recursive search), `type` (`video`, `audio`, `image`, `archive`, `document`, `application`, `other`), `sort` (`name`, `size`, `modified`), `order`, `page`, `page_size`. Returns a list plus `scope` and `path` |
+| `GET /api/files/usage` | `{ private: { used_bytes, limit_bytes }, shared: { used_bytes }, disk: { total, used, free } }` |
 | `GET /api/files/download?path=...` | The file, always as an attachment. Supports range requests |
+| `POST /api/files/reveal` | Body `{ scope?, path }`. Shows the file selected in File Explorer, or opens the folder. Never opens or runs the file itself |
 | `POST /api/files/folder` | Body `{ scope, path, name }` |
 | `DELETE /api/files?path=...` | Delete a file or folder |
 
@@ -107,75 +94,55 @@ that folder; anything that would leave it is refused.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/providers` | Every provider with `capabilities`, `notes`, `verification`, `enabled`, `configured`, `ready`, `auth_modes` and `auth` (`modes`, `anonymous_available`, `authentication_required`, `account_configured`, `account_valid`, `preference`, `effective_mode`, `status`: `anonymous` \| `account` \| `auth_required` \| `unavailable`). Administrators also get `credential_fields`, the *names* of stored fields, and the last health result. Stored values are never returned |
-| `PATCH /api/providers/{id}` | *admin*. Body `{ enabled }` |
-| `PUT /api/providers/{id}/auth-mode` | *admin*. Body `{ mode: "auto" \| "anonymous" \| "account" }`. `422 invalid_mode` when the provider does not support it |
-| `PUT /api/providers/{id}/credentials` | *admin*. Body `{ values: { field: value } }`. Replaces the stored credentials |
-| `DELETE /api/providers/{id}/credentials` | *admin* |
-| `POST /api/providers/{id}/test` | *admin*. Returns `{ ok, message, account }` |
-| `GET /api/providers/{id}/errors` | *admin*. Recent provider events |
+| `GET /api/providers` | Every provider with `capabilities`, `notes`, `verification`, `enabled`, `configured`, `ready`, `auth_modes` and `auth` (`modes`, `anonymous_available`, `authentication_required`, `account_configured`, `account_valid`, `preference`, `effective_mode`, `status`: `anonymous` \| `account` \| `auth_required` \| `unavailable`). Also `credential_fields`, the *names* of stored fields, and the last health result. Stored values are never returned |
+| `PATCH /api/providers/{id}` | Body `{ enabled }` |
+| `PUT /api/providers/{id}/auth-mode` | Body `{ mode: "auto" \| "anonymous" \| "account" }`. `422 invalid_mode` when the provider does not support it |
+| `PUT /api/providers/{id}/credentials` | Body `{ values: { field: value } }`. Replaces the stored credentials |
+| `DELETE /api/providers/{id}/credentials` | Remove the stored credentials |
+| `POST /api/providers/{id}/test` | Returns `{ ok, message, account }` |
+| `GET /api/providers/{id}/errors` | Recent provider events |
 
-## Administration
-
-All *admin* only, except `GET /api/activity`, which returns the caller's own
-activity for regular users.
+## Settings and maintenance
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/users` | Users with quota, storage use and counters |
-| `PATCH /api/users/{id}` | Body `{ display_name?, role?, is_active? }`. The last active administrator cannot be demoted or disabled |
-| `DELETE /api/users/{id}?delete_files=true\|false` | Delete a user, their sessions and history |
-| `POST /api/users/{id}/reset-password` | Body `{ new_password? }`. Without one a temporary password is generated and returned once |
-| `GET /api/users/{id}/quota`, `PUT /api/users/{id}/quota` | Body `{ max_concurrent, max_storage_bytes, max_file_bytes, daily_downloads, bandwidth_bps, max_queued }` (0 = no limit) |
-| `GET /api/invitations` | All invitations with their status |
-| `POST /api/invitations` | Body `{ role?, note?, expires_hours? }`. The response contains `token`, `path` and `url` exactly once |
-| `DELETE /api/invitations/{id}` | Revoke |
-| `GET /api/admin/sessions`, `DELETE /api/admin/sessions/{id}` | Everyone's sessions; revoke one |
 | `GET /api/settings` | `{ settings, effective, restart_required }` |
 | `PUT /api/settings` | Body: any subset of sections, for example `{ "downloads": { "retry_count": 5 } }`. Returns the new state plus `changed` |
-| `GET /api/activity` | Query: `page`, `page_size`, `category` (`auth`, `download`, `file`, `provider`, `admin`), `level`, `scope` (`me`, `all`), `q` |
+| `GET /api/activity` | Query: `page`, `page_size`, `category` (`download`, `file`, `provider`, `admin`), `level`, `q` |
 | `GET /api/admin/health` | Health checks, versions, disk, queue and connection counters |
 | `GET /api/admin/logs?limit=&level=&q=` | Tail of the structured log |
 | `GET /api/admin/update?refresh=true\|false` | Installed and latest version, release notes, whether an update can be installed from here (`can_apply`, `apply_blocker`) and the result of the last update run. The GitHub answer is cached for six hours; `refresh=true` asks again |
-| `POST /api/admin/update/apply` | Install the latest release. `FETCH.exe` downloads and verifies the new executable during this request, then restarts; a folder installation starts `update.ps1` in the background. `409 update_unavailable` when there is nothing to install or this server cannot update itself (not Windows, not started with `start.ps1`, an update already running) |
+| `POST /api/admin/update/apply` | Install the latest release. `FETCH.exe` downloads and verifies the new executable during this request, then restarts; a folder installation starts `update.ps1` in the background. `409 update_unavailable` when there is nothing to install or this server cannot update itself (not Windows, not started with `start.ps1` or as `FETCH.exe`, an update already running) |
 | `POST /api/admin/workers/restart` | Requeue every running transfer |
 | `POST /api/admin/cleanup` | Run storage maintenance now |
 
 ## WebSocket
 
-Connect to `ws(s)://<host>/api/ws` with the session cookie. The server closes
-with code `4401` when the session is missing, expired or revoked.
+Connect to `ws://localhost:<port>/api/ws`. A connection from another website
+(foreign `Origin`) or another host name is closed with code `1008`.
 
 Every message is `{ "type": "...", "data": { ... } }`:
 
-| Type | Data | Sent to |
-|---|---|---|
-| `hello` | `user_id`, `server_time` | the connection |
-| `ping` | | the connection (keep-alive) |
-| `download.added`, `.started`, `.paused`, `.completed`, `.failed`, `.cancelled`, `.updated` | `download` (full object) | owner and administrators |
-| `download.progress` | `id`, `downloaded_bytes`, `total_bytes`, `speed_bps`, `avg_speed_bps`, `eta_seconds` | owner and administrators, at most about twice a second per job |
-| `download.removed` | `id` | owner and administrators |
-| `queue.changed` | | everyone (carries no details) |
-| `storage.changed` | `scope` | owner, or everyone for the shared folder |
-| `activity` | | the affected user and administrators |
-| `quota.changed` | | the affected user |
-| `settings.changed`, `providers.changed` | | everyone |
-| `users.changed` | | administrators |
-
-Events are filtered on the server per connection, so a client never receives
-another user's download data.
+| Type | Data |
+|---|---|
+| `hello` | `server_time` |
+| `ping` | (keep-alive) |
+| `download.added`, `.updated` | `download` (full object) |
+| `download.progress` | `id`, `downloaded_bytes`, `total_bytes`, `speed_bps`, `avg_speed_bps`, `eta_seconds`, at most about twice a second per job |
+| `download.removed` | `id` |
+| `queue.changed` | |
+| `storage.changed` | `scope` |
+| `activity` | |
+| `settings.changed`, `providers.changed` | |
 
 ## Example
 
 ```powershell
 $base = 'http://localhost:8787/api'
-$login = Invoke-RestMethod "$base/auth/login" -Method Post -SessionVariable s `
-    -ContentType 'application/json' -Body '{"username":"alice","password":"..."}'
-$headers = @{ 'X-CSRF-Token' = $login.csrf_token }
 
-Invoke-RestMethod "$base/downloads" -Method Post -WebSession $s -Headers $headers `
+Invoke-RestMethod "$base/downloads" -Method Post `
     -ContentType 'application/json' `
     -Body '{"urls":["https://example.com/file.zip"]}'
 
-Invoke-RestMethod "$base/downloads?state=downloading" -WebSession $s
+Invoke-RestMethod "$base/downloads?state=downloading"
 ```

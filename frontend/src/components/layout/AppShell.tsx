@@ -6,30 +6,27 @@ import {
   FolderClosed,
   LayoutDashboard,
   ListOrdered,
-  LogOut,
   Menu as MenuIcon,
   Plug,
   Plus,
   Settings as SettingsIcon,
-  Users,
   X,
 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { AddDownloadDialog } from "@/components/downloads/AddDownloadDialog";
-import { Button, Menu, Notice, ProgressBar } from "@/components/ui";
-import { useAuth, useMe } from "@/lib/auth";
+import { Button, ProgressBar } from "@/components/ui";
+import { useBootstrap } from "@/lib/app";
 import { useUpdateStatus } from "@/lib/queries";
 import { cn } from "@/lib/cn";
-import { formatBytes, initials } from "@/lib/format";
+import { formatBytes } from "@/lib/format";
 import { useConnectionStatus, type ConnectionStatus } from "@/lib/realtime";
 
 const COLLAPSE_KEY = "fetch.sidebar.collapsed";
 
 interface AddDownloadOptions {
   folder?: string;
-  destination?: "private" | "shared";
 }
 
 const AddDownloadContext = createContext<(options?: AddDownloadOptions) => void>(() => undefined);
@@ -46,7 +43,6 @@ const NAV = [
   { to: "/files", label: "Files", icon: FolderClosed },
   { to: "/providers", label: "Providers", icon: Plug },
   { to: "/activity", label: "Activity", icon: Activity },
-  { to: "/users", label: "Users", icon: Users, admin: true },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -69,22 +65,18 @@ function Logo({ name, compact }: { name: string; compact: boolean }) {
 }
 
 function SidebarContent({ compact, onNavigate, onToggle }: { compact: boolean; onNavigate?: () => void; onToggle?: () => void }) {
-  const { bootstrap, signOut } = useAuth();
-  const me = useMe();
-  const navigate = useNavigate();
+  const bootstrap = useBootstrap();
   const status = useConnectionStatus();
   const openAdd = useAddDownload();
-  const isAdmin = me.user.role === "admin";
-  const updateAvailable = useUpdateStatus(isAdmin).data?.update_available ?? false;
-  const { storage_bytes: used } = me.quota.usage;
-  const limit = me.quota.limits.max_storage_bytes;
+  const updateAvailable = useUpdateStatus().data?.update_available ?? false;
+  const { storage_bytes: used, storage_limit_bytes: limit } = bootstrap.usage;
   const percent = limit > 0 ? Math.min(100, (used / limit) * 100) : null;
   const meta = STATUS[status];
 
   return (
     <div className="flex h-full flex-col">
       <div className={cn("flex h-14 shrink-0 items-center border-b border-line", compact ? "justify-center px-2" : "justify-between px-4")}>
-        <Logo name={bootstrap?.app_name ?? "FETCH"} compact={compact} />
+        <Logo name={bootstrap.app_name} compact={compact} />
         {onToggle && !compact && (
           <Button variant="ghost" size="icon-sm" onClick={onToggle} aria-label="Collapse sidebar">
             <ChevronsLeft className="h-4 w-4" />
@@ -109,7 +101,7 @@ function SidebarContent({ compact, onNavigate, onToggle }: { compact: boolean; o
       </div>
 
       <nav aria-label="Main" className={cn("flex-1 space-y-0.5 overflow-y-auto py-3", compact ? "px-2" : "px-3")}>
-        {NAV.filter((item) => !item.admin || isAdmin).map((item) => (
+        {NAV.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -169,37 +161,6 @@ function SidebarContent({ compact, onNavigate, onToggle }: { compact: boolean; o
           {!compact && <span>{meta.label}</span>}
         </div>
 
-        <Menu
-          align="left"
-          placement="top"
-          className="w-full"
-          items={[
-            { label: "Account settings", icon: <SettingsIcon />, onSelect: () => { onNavigate?.(); navigate("/settings"); } },
-            { label: "Sign out", icon: <LogOut />, onSelect: () => void signOut(), separatorBefore: true },
-          ]}
-          trigger={(props) => (
-            <button
-              type="button"
-              {...props}
-              aria-label="Account menu"
-              className={cn(
-                "flex w-full items-center gap-2.5 rounded p-1.5 text-left transition-colors hover:bg-raised",
-                compact && "justify-center",
-              )}
-            >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line bg-raised text-2xs font-semibold text-muted">
-                {initials(me.user.display_name || me.user.username)}
-              </span>
-              {!compact && (
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-medium text-fg">{me.user.display_name || me.user.username}</span>
-                  <span className="block truncate text-2xs text-subtle">{isAdmin ? "Administrator" : "Member"}</span>
-                </span>
-              )}
-            </button>
-          )}
-        />
-
         {onToggle && compact && (
           <Button variant="ghost" size="icon" className="w-full" onClick={onToggle} aria-label="Expand sidebar">
             <ChevronsRight className="h-4 w-4" />
@@ -211,7 +172,6 @@ function SidebarContent({ compact, onNavigate, onToggle }: { compact: boolean; o
 }
 
 export function AppShell({ banner }: { banner?: ReactNode }) {
-  const me = useMe();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -276,11 +236,6 @@ export function AppShell({ banner }: { banner?: ReactNode }) {
           </header>
           <main className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-              {me.user.must_change_password && (
-                <Notice tone="warning" className="mb-5">
-                  An administrator reset your password. Please choose a new one under Settings → Account.
-                </Notice>
-              )}
               {banner}
               <Outlet />
             </div>
@@ -291,7 +246,6 @@ export function AppShell({ banner }: { banner?: ReactNode }) {
         open={addOpen}
         onClose={closeAdd}
         initialFolder={addOptions.folder}
-        initialDestination={addOptions.destination}
       />
     </AddDownloadContext.Provider>
   );

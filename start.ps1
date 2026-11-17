@@ -104,11 +104,6 @@ Write-Host "FETCH $($status.version) is running." -ForegroundColor Green
 Write-Host "  Dashboard: $url"
 Write-Host "  Logs:      $script:LogDir"
 Write-Host '  Stop it:   .\stop.ps1'
-if ($status.setup_required) {
-    Write-Host ''
-    Write-Host '  First-time setup token (asked for by the dashboard):' -ForegroundColor White
-    Write-Host "      $($status.setup_token)" -ForegroundColor Yellow
-}
 Write-Host ''
 
 if (-not $NoBrowser.IsPresent -and [Environment]::UserInteractive) {

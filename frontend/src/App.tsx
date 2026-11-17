@@ -1,17 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ServerCrash } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { Button, EmptyState, PageLoader, ToastProvider } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { AuthProvider, useAuth } from "@/lib/auth";
+import { AppProvider, useApp } from "@/lib/app";
 import { RealtimeProvider } from "@/lib/realtime";
 import { ThemeProvider } from "@/lib/theme";
 import { useUpdating } from "@/lib/updating";
 import { ActivityPage } from "@/pages/Activity";
-import { InvitePage, LoginPage, SetupPage } from "@/pages/Auth";
 import { DownloadsPage } from "@/pages/Downloads";
 import { FilesPage } from "@/pages/Files";
 import { OverviewPage } from "@/pages/Overview";
@@ -19,7 +18,6 @@ import { ProvidersPage } from "@/pages/Providers";
 import { QueuePage } from "@/pages/Queue";
 import { SettingsPage } from "@/pages/Settings";
 import { UpdatingScreen } from "@/pages/Updates";
-import { UsersPage } from "@/pages/Users";
 
 export function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -37,14 +35,8 @@ export function createQueryClient(): QueryClient {
   });
 }
 
-function RequireAdmin({ children }: { children: ReactNode }) {
-  const { me } = useAuth();
-  return me?.user.role === "admin" ? <>{children}</> : <Navigate to="/" replace />;
-}
-
 function Routing() {
-  const { bootstrap, me, loading, unreachable, sessionEnded, refresh } = useAuth();
-  const location = useLocation();
+  const { bootstrap, loading, unreachable } = useApp();
   const updating = useUpdating();
 
   useEffect(() => {
@@ -66,7 +58,7 @@ function Routing() {
         <EmptyState
           icon={<ServerCrash className="h-5 w-5" />}
           title="Cannot reach the FETCH server"
-          description="Check that FETCH is running on the host computer and that you are connected to the same network or tailnet."
+          description="FETCH may still be starting, or it was stopped. Start FETCH again if this does not go away."
           action={<Button onClick={() => window.location.reload()}>Try again</Button>}
         />
       </div>
@@ -74,43 +66,21 @@ function Routing() {
   }
 
   return (
-    <ThemeProvider accountChoice={me?.user.theme} defaultChoice={bootstrap.default_theme}>
-      <RealtimeProvider
-        enabled={me !== null}
-        onSessionEnded={() => {
-          sessionEnded();
-          void refresh();
-        }}
-      >
+    <ThemeProvider accountChoice={bootstrap.theme} defaultChoice={bootstrap.default_theme}>
+      <RealtimeProvider enabled>
         <Routes>
-          {bootstrap.setup_required ? (
-            <>
-              <Route path="/setup" element={<SetupPage />} />
-              <Route path="*" element={<Navigate to="/setup" replace />} />
-            </>
-          ) : me === null ? (
-            <>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/invite/:token" element={<InvitePage />} />
-              <Route path="/register" element={<InvitePage />} />
-              <Route path="*" element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />} />
-            </>
-          ) : (
-            <>
-              <Route element={<AppShell />}>
-                <Route index element={<OverviewPage />} />
-                <Route path="downloads" element={<DownloadsPage />} />
-                <Route path="queue" element={<QueuePage />} />
-                <Route path="files" element={<FilesPage />} />
-                <Route path="providers" element={<ProvidersPage />} />
-                <Route path="activity" element={<ActivityPage />} />
-                <Route path="users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="settings/:tab" element={<SettingsPage />} />
-              </Route>
-              <Route path="*" element={<Navigate to={(location.state as { from?: string } | null)?.from ?? "/"} replace />} />
-            </>
-          )}
+          <Route element={<AppShell />}>
+            <Route index element={<OverviewPage />} />
+            <Route path="downloads" element={<DownloadsPage />} />
+            <Route path="queue" element={<QueuePage />} />
+            <Route path="files" element={<FilesPage />} />
+            <Route path="providers" element={<ProvidersPage />} />
+            <Route path="activity" element={<ActivityPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/:tab" element={<SettingsPage />} />
+          </Route>
+          {/* Links from versions with accounts (sign-in, setup, invitations) lead home. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </RealtimeProvider>
     </ThemeProvider>
@@ -123,9 +93,9 @@ export function App() {
     <QueryClientProvider client={client}>
       <BrowserRouter>
         <ToastProvider>
-          <AuthProvider>
+          <AppProvider>
             <Routing />
-          </AuthProvider>
+          </AppProvider>
         </ToastProvider>
       </BrowserRouter>
     </QueryClientProvider>

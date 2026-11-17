@@ -1,26 +1,29 @@
-"""Shared FastAPI dependencies: context, DB session, authentication, CSRF."""
+"""Shared FastAPI dependencies: context, DB session, the local profile, origin checks.
+
+FETCH is a local application: it listens on this computer only and has no
+accounts. Every request acts as the single built-in local profile. What keeps
+other web pages away is the pair of checks in this module: the ``Host`` header
+must name this computer (defeats DNS rebinding) and requests that change
+something must come from FETCH's own pages (defeats cross-site requests).
+"""
 
 from __future__ import annotations
 
-import hmac
 import ipaddress
 from collections.abc import Iterator
-from datetime import timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import Depends, Request, WebSocket
+from fastapi import Depends, Request
 from sqlalchemy.orm import Session as DbSession
 from starlette.requests import HTTPConnection
 
 from ..context import AppContext
-from ..db import utcnow
-from ..models import Session, User
-from ..security.crypto import hash_token
+from ..models import Role, User
 
-SESSION_COOKIE = "fetch_session"
-CSRF_HEADER = "x-csrf-token"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+LOCAL_NAMES = {"localhost"}
+LOCAL_USERNAME = "local"
 
 
 class ApiError(Exception):
@@ -54,126 +57,81 @@ def get_db(ctx: Ctx) -> Iterator[DbSession]:
 Db = Annotated[DbSession, Depends(get_db)]
 
 
-def _peer_trusted(conn: HTTPConnection, ctx: AppContext) -> bool:
-    peer = conn.client.host if conn.client else ""
+def is_local_host(host: str) -> bool:
+    """True for a host name or address (without port) that means "this computer"."""
+    host = host.strip().lower().strip("[]")
+    if host in LOCAL_NAMES:
+        return True
     try:
-        address = ipaddress.ip_address(peer)
+        return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
-    for entry in ctx.settings.get().network.trusted_proxies:
-        if address in ipaddress.ip_network(entry, strict=False):
-            return True
+
+
+def _hostname(netloc: str) -> str:
+    try:
+        return urlsplit(f"//{netloc}").hostname or ""
+    except ValueError:
+        return ""
+
+
+def is_local_request(scope: dict) -> bool:
+    """Whether an ASGI connection comes from this computer and addresses it by a local name."""
+    client = scope.get("client")
+    if client and not is_local_host(str(client[0])):
+        return False
+    for name, value in scope.get("headers", ()):
+        if name == b"host":
+            return is_local_host(_hostname(value.decode("latin-1")))
     return False
 
 
-def client_ip(conn: HTTPConnection, ctx: AppContext) -> str:
-    """The client address; forwarded headers are honoured only from trusted proxies."""
-    peer = conn.client.host if conn.client else ""
-    if _peer_trusted(conn, ctx):
-        forwarded = conn.headers.get("x-forwarded-for", "")
-        candidate = forwarded.split(",")[-1].strip()
-        if candidate:
-            try:
-                return str(ipaddress.ip_address(candidate))
-            except ValueError:
-                pass
-    return peer
+def client_ip(conn: HTTPConnection, ctx: AppContext | None = None) -> str:
+    return conn.client.host if conn.client else ""
 
 
-def is_secure(conn: HTTPConnection, ctx: AppContext) -> bool:
-    mode = ctx.boot.cookie_secure
-    if mode in ("true", "always", "1"):
-        return True
-    if mode in ("false", "never", "0"):
-        return False
-    if conn.url.scheme in ("https", "wss"):
-        return True
-    return _peer_trusted(conn, ctx) and conn.headers.get("x-forwarded-proto", "") == "https"
-
-
-def check_origin(conn: HTTPConnection, ctx: AppContext) -> None:
+def check_origin(conn: HTTPConnection, ctx: AppContext | None = None) -> None:
     """Reject cross-site requests. Browsers always send Origin on those."""
     origin = conn.headers.get("origin")
-    if not origin or origin == "null":
-        if origin == "null":
-            raise ApiError(403, "bad_origin", "Cross-site requests are not allowed.")
+    if not origin:
         return
-    host = conn.headers.get("host", "")
-    forwarded_host = conn.headers.get("x-forwarded-host", "") if _peer_trusted(conn, ctx) else ""
-    origin_host = urlsplit(origin).netloc
-    network = ctx.settings.get().network
-    allowed = {o.rstrip("/") for o in network.cors_origins}
-    if network.public_url:
-        allowed.add(network.public_url)
-    if origin_host in (host, forwarded_host) or origin.rstrip("/") in allowed:
+    if origin != "null" and urlsplit(origin).netloc == conn.headers.get("host", ""):
         return
     raise ApiError(403, "bad_origin", "Cross-site requests are not allowed.")
 
 
-def load_session(conn: HTTPConnection, db: DbSession) -> tuple[Session, User] | None:
-    token = conn.cookies.get(SESSION_COOKIE)
-    if not token:
-        return None
-    row = db.query(Session).filter(Session.token_hash == hash_token(token)).one_or_none()
-    if row is None:
-        return None
-    now = utcnow()
-    if row.expires_at <= now:
-        db.delete(row)
-        db.flush()
-        return None
-    user = row.user
-    if user is None or not user.is_active:
-        return None
-    if now - row.last_seen_at > timedelta(seconds=60):
-        row.last_seen_at = now
-    return row, user
+def local_user(db: DbSession, ctx: AppContext) -> User:
+    """The built-in local profile that owns everything; created on first use.
 
-
-def current_session(request: Request, ctx: Ctx, db: Db) -> Session:
-    if request.method not in SAFE_METHODS:
-        check_origin(request, ctx)
-    found = load_session(request, db)
-    if found is None:
-        raise ApiError(401, "not_authenticated", "Please sign in.")
-    session, user = found
-    if request.method not in SAFE_METHODS:
-        supplied = request.headers.get(CSRF_HEADER, "")
-        if not hmac.compare_digest(supplied, session.csrf_token):
-            raise ApiError(403, "csrf_failed", "Security check failed. Reload the page and try again.")
-    request.state.user = user
-    request.state.session = session
-    return session
-
-
-CurrentSession = Annotated[Session, Depends(current_session)]
-
-
-def current_user(session: CurrentSession) -> User:
-    return session.user
-
-
-CurrentUser = Annotated[User, Depends(current_user)]
-
-
-def require_admin(user: CurrentUser) -> User:
-    if not user.is_admin:
-        raise ApiError(403, "forbidden", "Administrator access is required.")
+    An installation that was set up by a version with accounts keeps its first
+    administrator as the local profile, so downloads and files stay in place.
+    """
+    user = db.get(User, ctx.local_user_id) if ctx.local_user_id else None
+    if user is None:
+        user = (
+            db.query(User)
+            .order_by((User.role != Role.ADMIN.value), User.id)
+            .first()
+        )
+        if user is None:
+            user = User(username=LOCAL_USERNAME, display_name="", role=Role.ADMIN.value)
+            db.add(user)
+            db.flush()
+        if not user.is_admin or not user.is_active:
+            user.role, user.is_active = Role.ADMIN.value, True
+            db.flush()
+        ctx.local_user_id = user.id
     return user
 
 
-AdminUser = Annotated[User, Depends(require_admin)]
+def current_user(request: Request, ctx: Ctx, db: Db) -> User:
+    if request.method not in SAFE_METHODS:
+        check_origin(request, ctx)
+    user = local_user(db, ctx)
+    request.state.user = user
+    return user
 
 
-def websocket_user(websocket: WebSocket, ctx: AppContext) -> tuple[Session, User] | None:
-    try:
-        check_origin(websocket, ctx)
-    except ApiError:
-        return None
-    with ctx.db.session() as db:
-        found = load_session(websocket, db)
-        if found is None:
-            return None
-        session, user = found
-        _ = (session.id, user.id, user.role)
-        return session, user
+CurrentUser = Annotated[User, Depends(current_user)]
+# Kept as a separate name for the endpoints that change how FETCH itself runs.
+AdminUser = CurrentUser

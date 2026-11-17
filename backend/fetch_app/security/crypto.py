@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import Any
 
@@ -28,8 +27,3 @@ class SecretBox:
             raise ValueError(
                 "Stored credentials could not be decrypted (was the secret key changed?)."
             ) from exc
-
-
-def hash_token(token: str) -> str:
-    """One-way hash for session and invitation tokens."""
-    return hashlib.sha256(token.encode()).hexdigest()

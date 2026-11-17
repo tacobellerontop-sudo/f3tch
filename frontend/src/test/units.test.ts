@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, buildUrl, errorMessage, setCsrfToken } from "@/lib/api";
+import { ApiError, api, buildUrl, errorMessage } from "@/lib/api";
 import { formatBytes, formatDuration, formatPercent, formatRelative, formatSpeed, initials } from "@/lib/format";
 import { progressStore } from "@/lib/progress";
 import { applyServerEvent } from "@/lib/realtime";
@@ -45,16 +45,15 @@ describe("API client", () => {
     expect(buildUrl("/downloads", { state: "failed", q: "", page: 2, owner: null })).toBe("/api/downloads?state=failed&page=2");
   });
 
-  it("adds the CSRF token to writes only and surfaces server error messages", async () => {
+  it("sends no sign-in token and surfaces server error messages", async () => {
     const server = mockApi({
       "GET /downloads": { items: [] },
       "POST /downloads/1/pause": new HttpFailure(409, "invalid_state", "A completed download cannot be paused."),
     });
-    setCsrfToken("tok");
     await api.get("/downloads");
     expect(server.calls[0].headers["X-CSRF-Token"]).toBeUndefined();
     const failure = await api.post("/downloads/1/pause").catch((error: unknown) => error);
-    expect(server.calls[1].headers["X-CSRF-Token"]).toBe("tok");
+    expect(server.calls[1].headers["X-CSRF-Token"]).toBeUndefined();
     expect(failure).toBeInstanceOf(ApiError);
     expect((failure as ApiError).code).toBe("invalid_state");
     expect(errorMessage(failure)).toBe("A completed download cannot be paused.");
@@ -102,9 +101,8 @@ describe("real-time events", () => {
   it("refreshes the right data for other events", () => {
     const { client, invalidate } = seeded();
     applyServerEvent(client, { type: "providers.changed", data: {} }, invalidate);
-    applyServerEvent(client, { type: "users.changed", data: {} }, invalidate);
     applyServerEvent(client, { type: "settings.changed", data: {} }, invalidate);
     const keys = invalidate.mock.calls.map((call) => call[0]);
-    expect(keys).toEqual(expect.arrayContaining(["providers", "users", "settings"]));
+    expect(keys).toEqual(expect.arrayContaining(["providers", "bootstrap", "settings"]));
   });
 });

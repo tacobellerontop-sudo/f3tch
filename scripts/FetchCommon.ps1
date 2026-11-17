@@ -189,10 +189,8 @@ function Get-FetchProcess {
 }
 
 function Get-DashboardUrl($Status) {
-    $hostName = $Status.bind_address
-    if ($hostName -eq '0.0.0.0' -or $hostName -eq '::' -or $hostName -eq '127.0.0.1') { $hostName = 'localhost' }
-    if ($hostName -like '*:*') { $hostName = "[$hostName]" }
-    return "http://$($hostName):$($Status.port)"
+    # FETCH listens on this computer only and answers to the name localhost.
+    return "http://localhost:$($Status.port)"
 }
 
 function Stop-FetchServer {

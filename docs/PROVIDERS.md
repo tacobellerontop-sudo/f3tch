@@ -226,7 +226,7 @@ That test only reads the public page of your file (name, size, availability).
 | `provider_unavailable` | Temporary provider or server error | yes |
 | `network_error` | Connection problem or interrupted transfer | yes |
 | `unsafe_url` | The link (or a redirect) points to a private address | no |
-| `provider_disabled` | An administrator disabled this provider | no |
+| `provider_disabled` | This provider is switched off under **Providers** | no |
 | `verification_failed` | The finished file failed its integrity check | yes |
 | `unexpected_response` | The provider answered in a way FETCH does not understand | no |
 

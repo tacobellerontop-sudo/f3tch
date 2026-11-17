@@ -103,7 +103,7 @@ class ProviderRegistry:
             raise ProviderError(ErrorCode.UNSUPPORTED, "No installed provider supports this link.")
         if not self.is_enabled(provider.id):
             raise ProviderError(
-                ErrorCode.DISABLED, f"The {provider.name} provider is disabled by the administrator."
+                ErrorCode.DISABLED, f"The {provider.name} provider is switched off on the Providers page."
             )
         return provider
 
@@ -251,7 +251,7 @@ class ProviderRegistry:
         if not self.is_enabled(provider.id):
             return LinkInfo(
                 url=url, provider=provider.id, supported=False, restriction=ErrorCode.DISABLED,
-                message=f"The {provider.name} provider is disabled by the administrator.",
+                message=f"The {provider.name} provider is switched off on the Providers page.",
             )
         mode = ""
         try:

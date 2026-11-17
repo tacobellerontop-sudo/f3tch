@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
-import re
 import sys
 import urllib.error
 import urllib.request
@@ -18,7 +16,7 @@ from .config import BootConfig, load_config, write_initial_config
 def _init(boot: BootConfig, args: argparse.Namespace) -> int:
     from .db import run_migrations
 
-    created = write_initial_config(boot, bind_address=args.bind, port=args.port)
+    created = write_initial_config(boot, port=args.port)
     boot = load_config(boot.home, boot.config_file)
     boot.ensure_dirs()
     run_migrations(boot.database_url)
@@ -31,58 +29,14 @@ def _init(boot: BootConfig, args: argparse.Namespace) -> int:
     return 0
 
 
-def _create_admin(boot: BootConfig, args: argparse.Namespace) -> int:
-    from .db import Database, run_migrations
-    from .models import Role, User
-    from .quotas import get_quota
-    from .schemas import USERNAME_PATTERN
-    from .security.passwords import check_policy, hash_password
-    from .settings_service import SettingsService
-
-    run_migrations(boot.database_url)
-    db = Database(boot.database_url)
-    settings = SettingsService(db, boot).get()
-    username = args.username or input("Administrator username: ").strip()
-    if not re.match(USERNAME_PATTERN, username):
-        print("Usernames are 3-32 characters: letters, digits, '.', '_' and '-'.", file=sys.stderr)
-        return 2
-    if args.password_stdin:
-        password = sys.stdin.readline().rstrip("\r\n")
-    else:
-        password = getpass.getpass("Password: ")
-        if getpass.getpass("Repeat password: ") != password:
-            print("The passwords do not match.", file=sys.stderr)
-            return 2
-    problem = check_policy(
-        password, min_length=settings.security.password_min_length,
-        require_mixed=settings.security.password_require_mixed,
-    )
-    if problem:
-        print(problem, file=sys.stderr)
-        return 2
-    with db.session() as session:
-        if session.query(User).filter(User.username == username).first():
-            print(f"A user named '{username}' already exists.", file=sys.stderr)
-            return 3
-        user = User(username=username, display_name=username,
-                    password_hash=hash_password(password), role=Role.ADMIN.value)
-        session.add(user)
-        session.flush()
-        get_quota(session, user, settings)
-    print(f"Administrator '{username}' created.")
-    return 0
-
-
 def _status(boot: BootConfig, _args: argparse.Namespace) -> int:
     from .db import Database, run_migrations
-    from .models import User
+    from .desktop import read_state
     from .settings_service import SettingsService
 
     run_migrations(boot.database_url)
     db = Database(boot.database_url)
     host, port = SettingsService(db, boot).effective_bind()
-    with db.session() as session:
-        users = session.query(User).count()
     running = None
     try:
         control = json.loads(boot.control_file.read_text(encoding="utf-8"))
@@ -95,8 +49,7 @@ def _status(boot: BootConfig, _args: argparse.Namespace) -> int:
         running = False
     print(json.dumps({
         "version": __version__, "running": running, "bind_address": host, "port": port,
-        "users": users, "setup_required": users == 0,
-        "setup_token": boot.setup_token if users == 0 else None,
+        "window": read_state(boot.data_dir) if running else None,
         "update_repository": boot.update_repository,
     }))
     return 0
@@ -140,6 +93,20 @@ def _is_running(boot: BootConfig) -> str | None:
             return base if resp.status == 200 else None
     except (OSError, ValueError, KeyError):
         return None
+
+
+def _show_running(boot: BootConfig) -> bool:
+    """Ask the FETCH that already runs from this folder to show its window."""
+    try:
+        control = json.loads(boot.control_file.read_text(encoding="utf-8"))
+        request = urllib.request.Request(
+            f"http://{_local_host(control.get('host', ''))}:{control['port']}/api/control/show",
+            method="POST", headers={"X-Fetch-Control": control["token"]}, data=b"",
+        )
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            return bool(json.loads(resp.read()).get("window"))
+    except (OSError, ValueError, KeyError):
+        return False
 
 
 def _open_browser(url: str) -> None:
@@ -209,18 +176,22 @@ def _remove_old_executable() -> None:
 
 
 def _run(boot: BootConfig, args: argparse.Namespace) -> int:
-    """What double-clicking FETCH.exe does: set up if needed, serve, open the dashboard."""
+    """What double-clicking FETCH.exe does: set up if needed, start the server, show the window."""
+    from . import desktop
     from .db import run_migrations
     from .storage import StorageManager
 
     after_update = args.after_update or ""
+    # `--no-browser` alone is the old way to ask for no interface. FETCH 1.x also
+    # passes it when it hands over to a new version, which should show its window.
+    headless = args.headless or (args.no_browser and not after_update)
     if after_update:
         _finish_update(boot, after_update)
     else:
         running = _is_running(boot)
         if running:
             print(f"FETCH is already running: {running}")
-            if not args.no_browser:
+            if not headless and not _show_running(boot):
                 _open_browser(running)
             return 0
     _remove_old_executable()
@@ -231,42 +202,77 @@ def _run(boot: BootConfig, args: argparse.Namespace) -> int:
         run_migrations(boot.database_url)
         StorageManager(boot.storage_root).ensure()
     except Exception as exc:
-        print(f"FETCH could not be set up in {boot.home}: {exc}", file=sys.stderr)
+        desktop.show_error("FETCH", f"FETCH could not be set up in {boot.home}: {exc}")
         if after_update:
             _record_update(boot, "failed", f"FETCH {__version__} could not start: {exc}", after_update)
         return 1
 
-    def started(url: str, setup_token: str | None) -> None:
-        if after_update:
-            _record_update(boot, "succeeded", f"Updated from {after_update} to {__version__}.", after_update)
-        print("  Keep this window open. Close it, or press Ctrl+C, to stop FETCH.\n")
-        if not args.no_browser:
-            # The fragment is not sent to the server; the setup page reads it.
-            _open_browser(f"{url}/setup#setup={setup_token}" if setup_token else url)
-
     args.host, args.port = None, None
-    code = _serve(boot, args, on_started=started)
+    webview = None if headless else desktop.load_window_library()
+    pystray = None if headless else desktop.load_tray_library()
+    if webview is None and pystray is None:
+        code = _run_in_console(boot, args, after_update, open_browser=not headless)
+    else:
+        code = _run_desktop(boot, args, after_update, webview, pystray)
     if code != 0 and after_update:
         _record_update(boot, "failed", f"FETCH {__version__} was installed but did not start.", after_update)
     return code
 
 
-def _serve(boot: BootConfig, args: argparse.Namespace, on_started=None) -> int:
+def _run_in_console(boot: BootConfig, args: argparse.Namespace, after_update: str, *, open_browser: bool) -> int:
+    """No window: the server runs in the foreground until it is stopped."""
+    if not open_browser:
+        os.environ["FETCH_HEADLESS"] = "1"  # an update restarts FETCH the same way
+
+    def started(url: str) -> None:
+        if after_update:
+            _record_update(boot, "succeeded", f"Updated from {after_update} to {__version__}.", after_update)
+        print("  Press Ctrl+C, or run 'stop', to stop FETCH.\n")
+        if open_browser:
+            _open_browser(url)
+
+    return _serve(boot, args, on_started=started)
+
+
+def _run_desktop(boot: BootConfig, args: argparse.Namespace, after_update: str, webview, pystray) -> int:
+    """The server on a background thread, the dashboard in a window of this same program."""
+    from . import desktop
+
+    backend = desktop.Backend(lambda **hooks: _serve(boot, args, **hooks))
+    if not backend.start():
+        backend.stop()
+        desktop.show_error("FETCH", backend.error or "FETCH could not start. Details are in logs/fetch.log.")
+        return backend.code or 1
+    if after_update:
+        _record_update(boot, "succeeded", f"Updated from {after_update} to {__version__}.", after_update)
+    shell = desktop.DesktopShell(
+        backend, webview=webview, pystray=pystray, data_dir=boot.data_dir,
+        storage_dir=backend.ctx.storage.root, open_browser=_open_browser,
+    )
+    return shell.run(title=backend.setting("general", "app_name", "FETCH"))
+
+
+def _serve(boot: BootConfig, args: argparse.Namespace, on_started=None, on_server=None, on_error=None) -> int:
     import uvicorn
 
     from .app import create_app
     from .logging_setup import setup_logging
+
+    def fail(message: str) -> int:
+        print(message, file=sys.stderr)
+        if on_error is not None:
+            on_error(message)
+        return 1
 
     boot.ensure_dirs()
     setup_logging(boot.log_dir, boot.log_level)
     try:
         app = create_app(boot)
     except Exception as exc:
-        print(f"FETCH could not start: {exc}", file=sys.stderr)
-        return 1
+        return fail(f"FETCH could not start: {exc}")
     ctx = app.state.ctx
     host, port = ctx.settings.effective_bind()
-    host, port = args.host or host, args.port or port
+    port = getattr(args, "port", None) or port
     config = uvicorn.Config(
         app, host=host, port=port, log_config=None, access_log=False,
         timeout_graceful_shutdown=20, ws_ping_interval=30, ws_ping_timeout=30,
@@ -274,6 +280,8 @@ def _serve(boot: BootConfig, args: argparse.Namespace, on_started=None) -> int:
     )
     server = uvicorn.Server(config)
     ctx.server = server
+    if on_server is not None:
+        on_server(server, ctx)
     boot.pid_file.write_text(str(os.getpid()), encoding="utf-8")
     boot.control_file.write_text(json.dumps({"host": host, "port": port, "token": ctx.control_token, "pid": os.getpid()}),
                                  encoding="utf-8")
@@ -281,15 +289,8 @@ def _serve(boot: BootConfig, args: argparse.Namespace, on_started=None) -> int:
         os.chmod(boot.control_file, 0o600)
     except OSError:
         pass
-    shown = "localhost" if host in ("0.0.0.0", "::", "127.0.0.1") else host
-    print(f"\n  FETCH {__version__} is running.\n  Dashboard: http://{shown}:{port}\n")
-    setup_token = None
-    with ctx.db.session() as session:
-        from .models import User
-
-        if session.query(User.id).first() is None:
-            setup_token = boot.setup_token
-            print(f"  First-time setup token: {boot.setup_token}\n")
+    url = f"http://{_local_host(host)}:{port}"
+    print(f"\n  FETCH {__version__} is running.\n  Dashboard: {url}\n")
     if on_started is not None:
         import threading
         import time
@@ -301,25 +302,30 @@ def _serve(boot: BootConfig, args: argparse.Namespace, on_started=None) -> int:
                     return
                 time.sleep(0.1)
             if server.started:
-                on_started(f"http://{shown}:{port}", setup_token)
+                on_started(url)
 
         threading.Thread(target=announce, daemon=True).start()
     try:
         server.run()
     except OSError as exc:
-        print(f"FETCH could not listen on {host}:{port}: {exc}", file=sys.stderr)
-        return 1
+        return fail(f"FETCH could not listen on {host}:{port}: {exc}")
+    except SystemExit:
+        # uvicorn exits this way when the port is taken.
+        return fail(f"FETCH could not listen on {host}:{port}. Is another program using that port?")
     finally:
         for path in (boot.pid_file, boot.control_file):
             try:
                 path.unlink()
             except OSError:
                 pass
-    return 0 if server.started else 1
+    return 0 if server.started else fail(f"FETCH could not listen on {host}:{port}.")
 
 
 def main(argv: list[str] | None = None) -> int:
-    # pythonw.exe (used by the Windows startup task) has no console streams.
+    # The windowed FETCH.exe and pythonw.exe have no console streams of their own.
+    from .desktop import attach_console
+
+    attach_console()
     if sys.stdout is None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
     if sys.stderr is None:
@@ -329,22 +335,16 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init", help="create configuration, folders and the database")
-    p.add_argument("--bind", default=None)
     p.add_argument("--port", type=int, default=None)
     p.set_defaults(func=_init)
 
-    p = sub.add_parser("create-admin", help="create an administrator account")
-    p.add_argument("--username", default=None)
-    p.add_argument("--password-stdin", action="store_true")
-    p.set_defaults(func=_create_admin)
-
     p = sub.add_parser("serve", help="run the server")
-    p.add_argument("--host", default=None)
     p.add_argument("--port", type=int, default=None)
     p.set_defaults(func=_serve)
 
-    p = sub.add_parser("run", help="set up if needed, run the server and open the dashboard")
-    p.add_argument("--no-browser", action="store_true")
+    p = sub.add_parser("run", help="set up if needed, start FETCH and show its window")
+    p.add_argument("--headless", action="store_true", help="no window, tray icon or browser")
+    p.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--after-update", default=None, help=argparse.SUPPRESS)
     p.set_defaults(func=_run)
 

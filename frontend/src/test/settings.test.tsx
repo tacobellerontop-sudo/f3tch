@@ -3,24 +3,18 @@ import { describe, expect, it } from "vitest";
 
 import type { AppSettings, SettingsPayload, UpdateStatus } from "@/lib/types";
 
-import { type Call, HttpFailure, makeAdminUser, makeAuth, makeMe, makeProvider, renderApp, signedIn } from "./harness";
+import { type Call, HttpFailure, local, makeAuth, makeProvider, renderApp } from "./harness";
 
 const settings: AppSettings = {
-  general: { app_name: "FETCH", theme: "dark", language: "en", default_destination: "private", check_for_updates: true },
+  general: {
+    app_name: "FETCH", theme: "dark", language: "en", default_destination: "private", check_for_updates: true, close_to_tray: true,
+  },
   downloads: {
-    max_global_concurrent: 3, max_per_user_concurrent: 2, retry_count: 3, retry_delay_seconds: 30, default_priority: 1,
+    max_global_concurrent: 3, speed_limit_kbps: 0, retry_count: 3, retry_delay_seconds: 30, default_priority: 1,
     use_aria2: true, aria2_path: "", aria2_min_size_mb: 16, aria2_connections: 4,
   },
-  storage: {
-    storage_root: "", max_storage_gb: 0, temp_cleanup_hours: 72, auto_delete_days: 0, history_retention_days: 0,
-    shared_enabled: true, users_can_write_shared: true,
-  },
-  network: { bind_address: "", port: 0, trusted_proxies: [], cors_origins: [], public_url: "" },
-  security: {
-    session_hours: 168, invitations_required: true, invitation_expiry_hours: 72, password_min_length: 10,
-    password_require_mixed: false, login_max_attempts: 5, login_window_minutes: 15, login_lockout_minutes: 15,
-  },
-  quota_defaults: { max_concurrent: 2, max_storage_gb: 50, max_file_gb: 0, daily_downloads: 0, bandwidth_kbps: 0, max_queued: 100 },
+  storage: { storage_root: "", max_storage_gb: 0, temp_cleanup_hours: 72, auto_delete_days: 0, history_retention_days: 0 },
+  network: { port: 0 },
 };
 
 const payload: SettingsPayload = {
@@ -32,115 +26,9 @@ const payload: SettingsPayload = {
   restart_required: [],
 };
 
-const alice = makeAdminUser({ id: 1, username: "alice", display_name: "Alice", role: "admin" });
-const bob = makeAdminUser({ id: 2, username: "bob", display_name: "Bob" });
-
 function admin(extra = {}) {
-  return signedIn(makeMe("admin"), {
-    "GET /users": [alice, bob],
-    "GET /invitations": [],
-    "GET /admin/sessions": [],
-    "GET /settings": payload,
-    "GET /auth/sessions": [],
-    ...extra,
-  });
+  return local({ "GET /settings": payload, ...extra });
 }
-
-describe("access control in the interface", () => {
-  it("keeps regular users out of the Users page and the server settings", async () => {
-    const { server } = renderApp("/users", signedIn(makeMe("user"), { "GET /auth/sessions": [] }));
-    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/");
-    expect(server.find("GET", "/invitations")).toHaveLength(0);
-  });
-
-  it("shows a regular user only their account settings", async () => {
-    const { server } = renderApp("/settings/security", signedIn(makeMe("user"), { "GET /auth/sessions": [] }));
-    expect(await screen.findByText("Signed-in devices")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/settings");
-    expect(screen.queryByRole("navigation", { name: "Settings sections" })).not.toBeInTheDocument();
-    expect(server.find("GET", "/settings")).toHaveLength(0);
-  });
-
-  it("does not offer provider administration to regular users", async () => {
-    renderApp("/providers", signedIn(makeMe("user"), {
-      "GET /providers": [makeProvider({ id: "gdrive", name: "Google Drive", ready: false, auth: makeAuth({ modes: ["account"], anonymous_available: false, authentication_required: true, effective_mode: null, status: "auth_required", message: "Google Drive needs an account and none is configured. Add one under Providers." }), capabilities: { ...makeProvider().capabilities, anonymous: false, credentials: true, requires_credentials: true, captcha: true } })],
-    }));
-    expect(await screen.findByText("Google Drive")).toBeInTheDocument();
-    expect(screen.getByText("Authentication required")).toBeInTheDocument();
-    expect(screen.getByText("No account stored")).toBeInTheDocument();
-    expect(screen.getByText(/CAPTCHAs are completed by you/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /credentials/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: /Sign-in mode/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-  });
-});
-
-describe("user administration", () => {
-  it("creates an invitation and shows the link once", async () => {
-    const { user, server } = renderApp("/users", admin({
-      "POST /invitations": {
-        id: 9, role: "user", note: "For Carol", created_at: "2026-01-10T12:00:00Z", expires_at: "2026-01-13T12:00:00Z",
-        used_at: null, revoked: false, status: "active", token: "tok123", path: "/invite/tok123", url: "https://fetch.tailnet.ts.net/invite/tok123",
-      },
-    }));
-    await user.click(await screen.findByRole("button", { name: "Invite user" }));
-    const dialog = within(await screen.findByRole("dialog"));
-    await user.type(dialog.getByLabelText("Note (optional)"), "For Carol");
-    await user.click(dialog.getByRole("button", { name: "Create link" }));
-    expect(await dialog.findByDisplayValue("https://fetch.tailnet.ts.net/invite/tok123")).toBeInTheDocument();
-    expect(server.find("POST", "/invitations")[0].body).toEqual({ role: "user", note: "For Carol", expires_hours: null });
-  });
-
-  it("saves a quota in bytes from the values entered in GB and KB/s", async () => {
-    const { user, server } = renderApp("/users", admin({ "PUT /users/2/quota": (call: Call) => call.body }));
-    await user.click(await screen.findByRole("button", { name: "Actions for bob" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit quota" }));
-    const dialog = within(await screen.findByRole("dialog"));
-    const storage = dialog.getByLabelText("Storage (GB)");
-    expect(storage).toHaveValue(50);
-    await user.clear(storage);
-    await user.type(storage, "10");
-    await user.clear(dialog.getByLabelText("Speed limit (KB/s)"));
-    await user.type(dialog.getByLabelText("Speed limit (KB/s)"), "500");
-    await user.click(dialog.getByRole("button", { name: "Save quota" }));
-    await waitFor(() => expect(server.find("PUT", "/users/2/quota")).toHaveLength(1));
-    expect(server.find("PUT", "/users/2/quota")[0].body).toEqual({
-      max_concurrent: 2, max_storage_bytes: 10 * 1024 ** 3, max_file_bytes: 0, daily_downloads: 0, bandwidth_bps: 512_000, max_queued: 100,
-    });
-  });
-
-  it("disables an account, and never offers that for the administrator's own account", async () => {
-    const { user, server } = renderApp("/users", admin({ "PATCH /users/2": { ...bob, is_active: false } }));
-    await user.click(await screen.findByRole("button", { name: "Actions for alice" }));
-    expect(screen.getByRole("menuitem", { name: "Disable account" })).toBeDisabled();
-    expect(screen.getByRole("menuitem", { name: "Delete user" })).toBeDisabled();
-    await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "Actions for bob" }));
-    await user.click(screen.getByRole("menuitem", { name: "Disable account" }));
-    await waitFor(() => expect(server.find("PATCH", "/users/2")).toHaveLength(1));
-    expect(server.find("PATCH", "/users/2")[0].body).toEqual({ is_active: false });
-  });
-
-  it("deletes a user only after confirmation and keeps their files unless asked", async () => {
-    const { user, server } = renderApp("/users", admin({ "DELETE /users/2": { ok: true } }));
-    await user.click(await screen.findByRole("button", { name: "Actions for bob" }));
-    await user.click(screen.getByRole("menuitem", { name: "Delete user" }));
-    const dialog = within(await screen.findByRole("dialog"));
-    expect(server.find("DELETE", "/users/2")).toHaveLength(0);
-    await user.click(dialog.getByRole("button", { name: "Delete user" }));
-    await waitFor(() => expect(server.find("DELETE", "/users/2")).toHaveLength(1));
-    expect(server.find("DELETE", "/users/2")[0].query.get("delete_files")).toBe("false");
-  });
-
-  it("shows a generated temporary password exactly once after a reset", async () => {
-    const { user } = renderApp("/users", admin({ "POST /users/2/reset-password": { ok: true, temporary_password: "Temp-Pass-1234567" } }));
-    await user.click(await screen.findByRole("button", { name: "Actions for bob" }));
-    await user.click(screen.getByRole("menuitem", { name: "Reset password" }));
-    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Reset password" }));
-    expect(await screen.findByDisplayValue("Temp-Pass-1234567")).toBeInTheDocument();
-  });
-});
 
 describe("providers and settings", () => {
   const rapidgator = makeProvider({
@@ -202,7 +90,7 @@ describe("providers and settings", () => {
         return { ...current, changed: ["downloads.max_global_concurrent", "downloads.use_aria2"] };
       },
     }));
-    const limit = await screen.findByLabelText("Simultaneous downloads (server)");
+    const limit = await screen.findByLabelText("Simultaneous downloads");
     const save = screen.getByRole("button", { name: "Save changes" });
     expect(save).toBeDisabled();
     await user.clear(limit);
@@ -217,26 +105,42 @@ describe("providers and settings", () => {
   });
 
   it("shows the validation message from the server", async () => {
-    const { user } = renderApp("/settings/network", admin({
-      "PUT /settings": new HttpFailure(422, "invalid_settings", "network.bind_address: Bind address must be an IP address, e.g. 127.0.0.1."),
+    const { user } = renderApp("/settings/advanced", admin({
+      "PUT /settings": new HttpFailure(422, "invalid_settings", "network.port: Port must be 0 (default) or between 1024 and 65535."),
     }));
-    await user.type(await screen.findByLabelText("Bind address"), "localhost");
+    expect(await screen.findByText(/not reachable from other devices/)).toBeInTheDocument();
+    const port = screen.getByLabelText("Port");
+    await user.clear(port);
+    await user.type(port, "80");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Bind address must be an IP address");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Port must be 0 (default) or between 1024 and 65535");
   });
 
-  it("changes the password and requires the repeat to match", async () => {
-    const { user, server } = renderApp("/settings", admin({ "POST /auth/password": { ok: true, sessions_revoked: 2 } }));
-    await user.type(await screen.findByLabelText("Current password"), "old password here");
-    await user.type(screen.getByLabelText("New password"), "new password here");
-    await user.type(screen.getByLabelText("Repeat new password"), "different");
-    expect(screen.getByRole("button", { name: "Change password" })).toBeDisabled();
-    await user.clear(screen.getByLabelText("Repeat new password"));
-    await user.type(screen.getByLabelText("Repeat new password"), "new password here");
-    await user.click(screen.getByRole("button", { name: "Change password" }));
-    await waitFor(() => expect(server.find("POST", "/auth/password")).toHaveLength(1));
-    expect(server.find("POST", "/auth/password")[0].body).toEqual({ current_password: "old password here", new_password: "new password here" });
-    expect(await screen.findByText(/2 other sessions were signed out/)).toBeInTheDocument();
+  it("offers no account, password, network exposure or quota settings", async () => {
+    renderApp("/settings", admin());
+    const sections = within(await screen.findByRole("navigation", { name: "Settings sections" }));
+    expect(sections.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "General", "Downloads", "Storage", "Advanced", "Updates", "Diagnostics", "Logs",
+    ]);
+    expect(await screen.findByRole("switch", { name: /Keep running when the window is closed/ })).toBeChecked();
+    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Bind address")).not.toBeInTheDocument();
+  });
+
+  it("saves the theme for next time", async () => {
+    const { user, server } = renderApp("/settings", admin({ "PATCH /preferences": { theme: "light" } }));
+    await user.click(await screen.findByRole("radio", { name: "Light" }));
+    await waitFor(() => expect(server.find("PATCH", "/preferences")).toHaveLength(1));
+    expect(server.find("PATCH", "/preferences")[0].body).toEqual({ theme: "light" });
+    expect(document.documentElement.dataset.theme).toBe("light");
+  });
+
+  it("closes to the tray unless that is switched off", async () => {
+    const { user, server } = renderApp("/settings", admin({ "PUT /settings": (call: Call) => ({ ...payload, changed: ["general.close_to_tray"], ...{ settings: { ...settings, ...(call.body as object) } } }) }));
+    await user.click(await screen.findByRole("switch", { name: /Keep running when the window is closed/ }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(server.find("PUT", "/settings")).toHaveLength(1));
+    expect(server.find("PUT", "/settings")[0].body).toEqual({ general: { ...settings.general, close_to_tray: false } });
   });
 });
 
@@ -323,11 +227,5 @@ describe("updates", () => {
     await user.click(toggle);
     await waitFor(() => expect(server.find("PUT", "/settings")).toHaveLength(1));
     expect(server.find("PUT", "/settings")[0].body).toEqual({ general: { check_for_updates: false } });
-  });
-
-  it("does not ask for update status on behalf of regular users", async () => {
-    const { server } = renderApp("/settings/updates", signedIn(makeMe("user"), { "GET /auth/sessions": [] }));
-    expect(await screen.findByText("Signed-in devices")).toBeInTheDocument();
-    expect(server.find("GET", "/admin/update")).toHaveLength(0);
   });
 });

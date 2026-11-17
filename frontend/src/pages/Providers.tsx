@@ -22,7 +22,6 @@ import {
   useToast,
 } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api";
-import { useMe } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatRelative } from "@/lib/format";
 import { useProviders } from "@/lib/queries";
@@ -218,7 +217,7 @@ function ErrorsDialog({ provider, onClose }: { provider: Provider | null; onClos
   );
 }
 
-function ProviderCard({ provider, isAdmin, onCredentials, onErrors }: { provider: Provider; isAdmin: boolean; onCredentials: () => void; onErrors: () => void }) {
+function ProviderCard({ provider, onCredentials, onErrors }: { provider: Provider; onCredentials: () => void; onErrors: () => void }) {
   const toast = useToast();
   const client = useQueryClient();
   const [result, setResult] = useState<ProviderTestResult | null>(null);
@@ -301,7 +300,7 @@ function ProviderCard({ provider, isAdmin, onCredentials, onErrors }: { provider
           {auth.account_configured && auth.account_valid === false && auth.account_message && (
             <p className="mt-2 text-xs leading-5 text-danger">{auth.account_message}</p>
           )}
-          {isAdmin && modeChoices.length > 0 && (
+          {modeChoices.length > 0 && (
             <label className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-muted">
               Mode
               <Select
@@ -335,64 +334,60 @@ function ProviderCard({ provider, isAdmin, onCredentials, onErrors }: { provider
         {provider.verification}
       </p>
 
-      {isAdmin && (
-        <div className="mt-4 space-y-3 border-t border-line pt-4">
-          <Switch
-            label="Enabled"
-            description="Disabled providers reject new links. Running downloads are not interrupted."
-            checked={provider.enabled}
-            disabled={toggle.isPending}
-            onChange={(enabled) => toggle.mutate(enabled)}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            {canConfigure && (
-              <Button size="sm" variant="secondary" icon={<KeyRound className="h-3.5 w-3.5" />} onClick={onCredentials}>
-                {provider.configured ? "Change credentials" : "Add credentials"}
-              </Button>
-            )}
-            <Button size="sm" variant="secondary" icon={<PlugZap className="h-3.5 w-3.5" />} loading={test.isPending} onClick={() => test.mutate()}>
-              Test connection
+      <div className="mt-4 space-y-3 border-t border-line pt-4">
+        <Switch
+          label="Enabled"
+          description="Disabled providers reject new links. Running downloads are not interrupted."
+          checked={provider.enabled}
+          disabled={toggle.isPending}
+          onChange={(enabled) => toggle.mutate(enabled)}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          {canConfigure && (
+            <Button size="sm" variant="secondary" icon={<KeyRound className="h-3.5 w-3.5" />} onClick={onCredentials}>
+              {provider.configured ? "Change credentials" : "Add credentials"}
             </Button>
-            <Button size="sm" variant="ghost" icon={<ScrollText className="h-3.5 w-3.5" />} onClick={onErrors}>
-              Events
-            </Button>
-          </div>
-          {test.isPending && (
-            <p className="flex items-center gap-2 text-xs text-subtle">
-              <Spinner className="h-3.5 w-3.5" /> Contacting {provider.name}…
-            </p>
           )}
-          {result && !test.isPending ? (
-            <Notice tone={result.ok ? "success" : "warning"}>
-              {result.message}
-              {account.length > 0 && (
-                <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-                  {account.map(([key, value]) => (
-                    <div key={key} className="contents">
-                      <dt className="capitalize opacity-80">{key.replace(/_/g, " ")}</dt>
-                      <dd className="tabular truncate">{String(value)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-            </Notice>
-          ) : (
-            provider.health !== "unknown" &&
-            provider.health_message && (
-              <p className={cn("text-xs leading-5", provider.health === "ok" ? "text-subtle" : "text-danger")}>
-                Last test {formatRelative(provider.checked_at)}: {provider.health_message}
-              </p>
-            )
-          )}
+          <Button size="sm" variant="secondary" icon={<PlugZap className="h-3.5 w-3.5" />} loading={test.isPending} onClick={() => test.mutate()}>
+            Test connection
+          </Button>
+          <Button size="sm" variant="ghost" icon={<ScrollText className="h-3.5 w-3.5" />} onClick={onErrors}>
+            Events
+          </Button>
         </div>
-      )}
+        {test.isPending && (
+          <p className="flex items-center gap-2 text-xs text-subtle">
+            <Spinner className="h-3.5 w-3.5" /> Contacting {provider.name}…
+          </p>
+        )}
+        {result && !test.isPending ? (
+          <Notice tone={result.ok ? "success" : "warning"}>
+            {result.message}
+            {account.length > 0 && (
+              <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                {account.map(([key, value]) => (
+                  <div key={key} className="contents">
+                    <dt className="capitalize opacity-80">{key.replace(/_/g, " ")}</dt>
+                    <dd className="tabular truncate">{String(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </Notice>
+        ) : (
+          provider.health !== "unknown" &&
+          provider.health_message && (
+            <p className={cn("text-xs leading-5", provider.health === "ok" ? "text-subtle" : "text-danger")}>
+              Last test {formatRelative(provider.checked_at)}: {provider.health_message}
+            </p>
+          )
+        )}
+      </div>
     </Card>
   );
 }
 
 export function ProvidersPage() {
-  const me = useMe();
-  const isAdmin = me.user.role === "admin";
   const providers = useProviders();
   const [credentialsFor, setCredentialsFor] = useState<string | null>(null);
   const [errorsFor, setErrorsFor] = useState<string | null>(null);
@@ -402,11 +397,7 @@ export function ProvidersPage() {
     <>
       <PageHeader
         title="Providers"
-        description={
-          isAdmin
-            ? "What each link source supports, and the accounts FETCH may use for it."
-            : "What each link source supports on this server."
-        }
+        description="What each link source supports, and the accounts FETCH may use for it."
       />
       <Notice className="mb-4">
         FETCH only downloads what a provider permits for the link and account in use. It never solves CAPTCHAs (you
@@ -423,19 +414,14 @@ export function ProvidersPage() {
             <ProviderCard
               key={provider.id}
               provider={provider}
-              isAdmin={isAdmin}
               onCredentials={() => setCredentialsFor(provider.id)}
               onErrors={() => setErrorsFor(provider.id)}
             />
           ))}
         </div>
       )}
-      {isAdmin && (
-        <>
-          <CredentialsDialog provider={find(credentialsFor)} onClose={() => setCredentialsFor(null)} />
-          <ErrorsDialog provider={find(errorsFor)} onClose={() => setErrorsFor(null)} />
-        </>
-      )}
+      <CredentialsDialog provider={find(credentialsFor)} onClose={() => setCredentialsFor(null)} />
+      <ErrorsDialog provider={find(errorsFor)} onClose={() => setErrorsFor(null)} />
     </>
   );
 }

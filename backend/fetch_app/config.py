@@ -1,8 +1,7 @@
 """Bootstrap configuration.
 
 This is the small amount of configuration FETCH needs *before* the database is
-available: where things live on disk, the encryption key and the first-run
-setup token. Everything else is a runtime setting stored in the database (see
+available: where things live on disk, the port and the encryption key. Everything else is a runtime setting stored in the database (see
 ``settings_service``).
 
 Sources, in increasing precedence: built-in defaults, ``config/fetch.toml``,
@@ -12,7 +11,6 @@ Sources, in increasing precedence: built-in defaults, ``config/fetch.toml``,
 from __future__ import annotations
 
 import os
-import secrets
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,14 +49,10 @@ class BootConfig:
     log_dir: Path
     storage_root: Path
     frontend_dist: Path
-    bind_address: str = "127.0.0.1"
     port: int = DEFAULT_PORT
     secret_key: str = ""
-    setup_token: str = ""
     # Hosts / CIDR ranges exempt from the SSRF guard (e.g. a NAS on the LAN).
     ssrf_allowlist: list[str] = field(default_factory=list)
-    # "auto" marks cookies Secure when the request arrived over HTTPS.
-    cookie_secure: str = "auto"
     log_level: str = "INFO"
     # GitHub repository ("owner/name") whose releases are offered as updates.
     update_repository: str = DEFAULT_UPDATE_REPOSITORY
@@ -129,12 +123,9 @@ def load_config(home: Path | None = None, config_file: Path | None = None) -> Bo
         frontend_dist=_resolve(
             home, pick("FETCH_FRONTEND_DIST", paths, "frontend_dist", default_frontend_dist())
         ),
-        bind_address=str(pick("FETCH_BIND", server, "bind_address", "127.0.0.1")),
         port=int(pick("FETCH_PORT", server, "port", DEFAULT_PORT)),
         secret_key=str(pick("FETCH_SECRET_KEY", security, "secret_key", "")),
-        setup_token=str(pick("FETCH_SETUP_TOKEN", security, "setup_token", "")),
         ssrf_allowlist=list(allow),
-        cookie_secure=str(pick("FETCH_COOKIE_SECURE", security, "cookie_secure", "auto")).lower(),
         log_level=str(pick("FETCH_LOG_LEVEL", server, "log_level", "INFO")).upper(),
         update_repository=str(
             pick("FETCH_UPDATE_REPO", updates, "repository", DEFAULT_UPDATE_REPOSITORY)
@@ -149,17 +140,12 @@ def _toml_str(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def write_initial_config(
-    config: BootConfig, *, bind_address: str | None = None, port: int | None = None
-) -> bool:
-    """Create ``fetch.toml`` with freshly generated secrets. Never overwrites."""
+def write_initial_config(config: BootConfig, *, port: int | None = None) -> bool:
+    """Create ``fetch.toml`` with a freshly generated key. Never overwrites."""
     if config.config_file.exists():
         return False
     config.config_file.parent.mkdir(parents=True, exist_ok=True)
     config.secret_key = Fernet.generate_key().decode()
-    config.setup_token = secrets.token_urlsafe(24)
-    if bind_address:
-        config.bind_address = bind_address
     if port:
         config.port = port
 
@@ -180,19 +166,16 @@ log_dir = {_toml_str(rel(config.log_dir))}
 storage_root = {_toml_str(rel(config.storage_root))}
 
 [server]
-# Used until overridden in Settings > Network.
-bind_address = {_toml_str(config.bind_address)}
+# FETCH listens on this computer only (127.0.0.1). The port can also be
+# changed under Settings > Advanced.
 port = {config.port}
 log_level = "INFO"
 
 [security]
 secret_key = {_toml_str(config.secret_key)}
-# Required once, to create the first administrator from the browser.
-setup_token = {_toml_str(config.setup_token)}
 # Hosts or CIDR ranges that downloads may reach despite being private, e.g.
 # ["192.168.1.20", "10.0.0.0/24"]. Leave empty unless you know you need it.
 ssrf_allowlist = []
-cookie_secure = "auto"
 
 [updates]
 # GitHub repository whose releases are offered under Settings > Updates.

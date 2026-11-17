@@ -85,8 +85,10 @@ jobs:
         run: python -m pip install -r backend/requirements.txt -r backend/requirements-build.txt
       - name: Build FETCH.exe
         run: python scripts/build_exe.py --out dist
-      - name: Start it, set it up, update it and stop it
+      - name: Start it, check it, update it and stop it
         run: python scripts/exe_selftest.py dist/FETCH.exe
+      - name: Open the desktop window, start it again, stop it
+        run: python scripts/exe_selftest.py dist/FETCH.exe --desktop
       - uses: actions/upload-artifact@v4
         with:
           name: fetch-exe
