@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AppSettings, SettingsPayload, UpdateStatus } from "@/lib/types";
 
-import { type Call, HttpFailure, local, makeProvider, renderApp } from "./harness";
+import { type Call, HttpFailure, local, makeAuth, makeProvider, renderApp } from "./harness";
 
 const settings: AppSettings = {
   general: {
@@ -54,6 +54,22 @@ describe("providers and settings", () => {
     await user.click(dialog.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(server.find("PUT", "/providers/rapidgator/credentials")).toHaveLength(1));
     expect(server.find("PUT", "/providers/rapidgator/credentials")[0].body).toEqual({ values: { login: "me@example.com", password: "s3cret" } });
+  });
+
+  it("shows the sign-in state of a provider and lets the mode be chosen", async () => {
+    const configured = { ...rapidgator, ready: true, configured: true, auth: makeAuth({ modes: ["anonymous", "account"], account_configured: true, account_valid: true, effective_mode: "account", status: "account" }) };
+    const { user, server } = renderApp("/providers", admin({
+      "GET /providers": [configured, makeProvider({ id: "mega", name: "MEGA", enabled: true, auth: makeAuth({ provider_available: false, status: "unavailable", message: "MEGA was unreachable the last time FETCH contacted it." }) })],
+      "PUT /providers/rapidgator/auth-mode": { ...configured, auth: makeAuth({ modes: ["anonymous", "account"], account_configured: true, preference: "anonymous" }) },
+    }));
+    expect(await screen.findByText("Using stored account")).toBeInTheDocument();
+    expect(screen.getAllByText("Anonymous access available").length).toBeGreaterThan(0);
+    expect(screen.getByText("Account configured and verified")).toBeInTheDocument();
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Sign-in mode for MEGA" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sign-in mode for Rapidgator" }), "anonymous");
+    await waitFor(() => expect(server.find("PUT", "/providers/rapidgator/auth-mode")).toHaveLength(1));
+    expect(server.find("PUT", "/providers/rapidgator/auth-mode")[0].body).toEqual({ mode: "anonymous" });
   });
 
   it("runs a connection test and reports a failure honestly", async () => {

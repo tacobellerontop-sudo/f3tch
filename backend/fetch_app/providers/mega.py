@@ -23,6 +23,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .base import (
+    AuthMode,
     Capabilities,
     ErrorCode,
     HealthReport,
@@ -127,6 +128,7 @@ class MegaProvider(ProviderAdapter):
     homepage = "https://mega.nz"
     priority = 20
     capabilities = Capabilities(checksum=True, waits=True)
+    auth_modes = (AuthMode.ANONYMOUS,)
     notes = (
         "Public single-file links only. Folder links and logging in to a MEGA account "
         "are not supported.",

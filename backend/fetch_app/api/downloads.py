@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session as DbSession
 
@@ -15,6 +16,7 @@ from ..models import OPEN_STATES, Download, DownloadState, FileRecord, User
 from ..providers.base import ErrorCode
 from ..schemas import (
     BulkIn,
+    CaptchaIn,
     DownloadPatchIn,
     InspectIn,
     ReorderIn,
@@ -60,7 +62,17 @@ def _overlay(ctx: AppContext, row: Download) -> dict:
         data["avg_speed_bps"] = handle.average
         if handle.total and handle.speed > 0:
             data["eta_seconds"] = max(0.0, (handle.total - handle.downloaded) / handle.speed)
+    # Tells the interface that this download is waiting for its owner.
+    data["action_required"] = "captcha" if _captcha_pending(ctx, row) else ""
     return data
+
+
+def _captcha_pending(ctx: AppContext, row: Download) -> bool:
+    return (
+        row.state == S.WAITING.value
+        and row.error_code == ErrorCode.CAPTCHA_REQUIRED
+        and ctx.manager.captcha(row.id) is not None
+    )
 
 
 def _validate_url(ctx: AppContext, url: str) -> str | None:
@@ -81,6 +93,7 @@ async def _inspect_all(ctx: AppContext, urls: list[str]) -> list[dict]:
                 "url": url, "provider": "", "provider_name": "", "supported": False,
                 "filename": "", "size": None, "resumable": None,
                 "restriction": ErrorCode.UNSAFE_URL, "message": problem,
+                "premium_only": False, "auth_mode": "",
             }
         async with gate:
             info = await ctx.registry.inspect(url)
@@ -306,6 +319,95 @@ def update_download(job_id: int, body: DownloadPatchIn, user: CurrentUser, ctx: 
     ctx.bus.publish("queue.changed", {}, audience="all")
     ctx.manager.wake()
     return data
+
+
+# -- CAPTCHA completed by the download's owner ----------------------------------
+# FETCH relays the provider's challenge to the person and their answer back.
+# It never solves one. These routes are declared before the generic
+# ``/{job_id}/{action}`` route below so that they take precedence.
+
+
+def _pending_captcha(ctx: AppContext, row: Download):
+    challenge = ctx.manager.captcha(row.id) if _captcha_pending(ctx, row) else None
+    if challenge is None:
+        raise ApiError(404, "no_captcha", "This download is not waiting for a CAPTCHA.")
+    return challenge
+
+
+@router.get("/{job_id}/captcha")
+def get_captcha(job_id: int, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
+    row = _own(db, user, job_id)
+    challenge = _pending_captcha(ctx, row)
+    expires = ctx.manager.captcha_expires_at(job_id)
+    return {
+        "download_id": job_id,
+        "provider": row.provider,
+        "kind": challenge.kind,
+        "prompt": challenge.prompt,
+        "has_image": bool(challenge.image),
+        "page_url": challenge.page_url,
+        "accepts_download_url": challenge.accepts_download_url,
+        "attempt": challenge.attempt,
+        "expires_at": (
+            datetime.fromtimestamp(expires, UTC).isoformat().replace("+00:00", "Z") if expires else None
+        ),
+    }
+
+
+@router.get("/{job_id}/captcha/image")
+def get_captcha_image(job_id: int, user: CurrentUser, ctx: Ctx, db: Db) -> Response:
+    challenge = _pending_captcha(ctx, _own(db, user, job_id))
+    if not challenge.image:
+        raise ApiError(404, "no_captcha", "This CAPTCHA has no picture.")
+    media_type = challenge.image_type if challenge.image_type in _IMAGE_TYPES else "application/octet-stream"
+    return Response(
+        challenge.image, media_type=media_type,
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                 "Content-Security-Policy": "default-src 'none'; sandbox"},
+    )
+
+
+@router.post("/{job_id}/captcha")
+async def submit_captcha(
+    job_id: int, body: CaptchaIn, request: Request, user: CurrentUser, ctx: Ctx, db: Db
+) -> dict:
+    row = _own(db, user, job_id)
+    challenge = _pending_captcha(ctx, row)
+    answer, download_url = body.answer.strip(), body.download_url.strip()
+    values: dict[str, str] = {}
+    if download_url:
+        if not challenge.accepts_download_url:
+            raise ApiError(422, "invalid_captcha", "This provider does not accept a download address.")
+        problem = _validate_url(ctx, download_url)
+        provider = ctx.registry.get(row.provider)
+        if problem is None and provider is not None:
+            problem = provider.check_download_address(download_url)
+        if problem:
+            raise ApiError(422, "invalid_captcha", problem)
+        values["download_url"] = download_url
+    elif answer:
+        if challenge.kind != "image":
+            raise ApiError(
+                422, "invalid_captcha",
+                "This CAPTCHA can only be completed on the provider's own website.",
+            )
+        values["answer"] = answer
+    else:
+        raise ApiError(422, "invalid_captcha", "Enter the CAPTCHA answer.")
+    owner_id = row.user_id
+    db.commit()
+    updated = await ctx.manager.submit_captcha(job_id, values)
+    if updated is None:
+        raise ApiError(409, "no_captcha", "This CAPTCHA is no longer valid. Retry the download.")
+    ctx.activity.record(
+        "download", "download.captcha_answered",
+        f"CAPTCHA completed by the user: {updated.filename or updated.url}",
+        user_id=owner_id, actor_id=user.id, ip=client_ip(request, ctx), target=str(job_id),
+    )
+    return _overlay(ctx, updated)
+
+
+_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 
 @router.post("/{job_id}/{action}")

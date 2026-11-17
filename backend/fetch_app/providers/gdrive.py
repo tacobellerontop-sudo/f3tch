@@ -1,6 +1,6 @@
 """Google Drive through the official Drive API v3 (authorized access only).
 
-FETCH does not scrape Drive's web download pages. An administrator supplies
+FETCH does not scrape Drive's web download pages. You supply
 either an API key (enough for files shared as "anyone with the link") or a
 service-account key (for files shared with that service account).
 """
@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from .base import (
+    AuthMode,
     Capabilities,
     CredentialField,
     ErrorCode,
@@ -53,6 +54,7 @@ class GoogleDriveProvider(ProviderAdapter):
     capabilities = Capabilities(
         anonymous=False, credentials=True, requires_credentials=True, checksum=True
     )
+    auth_modes = (AuthMode.ACCOUNT,)
     credential_fields = (
         CredentialField(
             "api_key",
@@ -162,8 +164,7 @@ class GoogleDriveProvider(ProviderAdapter):
             return {"X-Goog-Api-Key": creds["api_key"]}
         raise ProviderError(
             ErrorCode.AUTH_REQUIRED,
-            "Google Drive needs an API key or service account. Ask the administrator to "
-            "configure one under Providers.",
+            "Google Drive needs an API key or service account. Add one under Providers.",
         )
 
     @staticmethod

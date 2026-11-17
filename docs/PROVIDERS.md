@@ -10,24 +10,43 @@ FETCH only downloads what the provider permits for the link and the account in
 use. It does not and will not:
 
 - bypass logins, Premium requirements or paywalls,
-- solve, skip or outsource CAPTCHAs,
+- solve, skip or outsource CAPTCHAs (when a provider's free download asks for
+  one, FETCH shows it to you and passes on what you type, nothing more),
 - skip or shorten waiting periods,
 - evade IP, account or transfer quotas (no proxies, no account rotation),
 - forge tokens or use private or undocumented interfaces to get around limits.
 
 When a provider demands one of these, the download ends with a specific status
-(`captcha_required`, `auth_required`, `quota_exceeded`, ...) and a message that
-says what would be needed. Waiting periods that the provider announces are
-simply waited out, visibly, with a countdown.
+(`captcha_required`, `premium_only`, `auth_required`, `quota_exceeded`, ...)
+and a message that says what would be needed. Waiting periods that the provider
+announces are simply waited out, visibly, with a countdown.
+
+## Sign-in modes
+
+Every provider declares which of two modes it supports:
+
+| Mode | Meaning |
+|---|---|
+| `anonymous` | No provider credentials at all |
+| `account` | The account stored for that provider under **Providers** (encrypted, never shown again) |
+
+**Providers** shows, for each provider, whether anonymous access is available,
+whether an account is configured (and whether its last check succeeded),
+whether authentication is required, and whether the provider is unavailable.
+Where a provider supports both modes you can choose **Automatic** (the stored
+account if there is one, otherwise anonymous), **Anonymous** or **Stored
+account**. An explicit choice is never silently replaced: choosing "Stored
+account" with none stored reports `auth_required`.
 
 ## Capability overview
 
 | | Direct | Pixeldrain | MEGA | Google Drive | Rapidgator |
 |---|---|---|---|---|---|
-| Works without credentials | yes | yes | yes | no | no |
+| Works without credentials | yes | yes | yes | no | yes (free download: wait and CAPTCHA) |
+| Sign-in modes | anonymous | anonymous, account | anonymous | account | anonymous, account |
 | Accepts credentials | no | API key (optional) | no | API key or service account | account e-mail and password |
 | Inspect before download | yes | yes | yes | yes | yes |
-| Resume | if the server supports it | yes | yes | yes | yes |
+| Resume | if the server supports it | yes | yes | yes | with an account only |
 | Integrity check | size | size | MAC (cryptographic) | MD5 | size, MD5 when given |
 | Folder links | no | no | no | no | no |
 | Verified against the live service | local servers only | no | no | no | no |
@@ -111,30 +130,84 @@ have viewed or downloaded this file") is reported as `quota_exceeded`.
 
 Links: `https://rapidgator.net/file/<id>/...` (also `rg.to`).
 
-FETCH uses Rapidgator's official API with **your own account**.
+Rapidgator works in two modes.
+
+### Without an account (anonymous free download)
+
+FETCH follows the same steps a visitor's browser performs on rapidgator.net,
+at the pace Rapidgator sets:
+
+1. It reads the public file page: name, size, and whether the file is gone or
+   Premium-only. No account is needed to inspect a link.
+2. It starts Rapidgator's free-download timer and **waits the full period**
+   Rapidgator announces. The download shows as *waiting* with a countdown.
+3. Rapidgator then demands a CAPTCHA. The download shows "Needs you"; open it
+   and choose **Complete CAPTCHA**:
+   - A **picture CAPTCHA** is shown inside FETCH. You type the characters and
+     FETCH submits exactly what you typed. A wrong answer gets a new picture,
+     up to three times.
+   - A **CAPTCHA widget that only works on rapidgator.net** (reCAPTCHA,
+     hCaptcha and similar) cannot be shown inside FETCH. Open the file on
+     Rapidgator from the dialog, complete the free download steps there, and
+     paste the download address Rapidgator gives you. Rapidgator ties that
+     address to the network address that requested it, so this works when
+     your browser and FETCH share one (FETCH running on the same computer or
+     network).
+4. If you do not complete the CAPTCHA within five minutes, the download fails
+   with `captcha_required`; **Retry** starts again. FETCH does not keep
+   requesting new CAPTCHAs on its own.
+
+Limits FETCH respects in this mode:
+
+- One free download at a time; further Rapidgator downloads wait their turn.
+- "Delay between downloads" and the hourly limit are waited out for the full
+  stated period. The daily limit fails with `quota_exceeded`.
+- Premium-only files and files over the free size limit are rejected with
+  `premium_only` when the link is added.
+- Free downloads use one connection and cannot be resumed; an interrupted one
+  starts over, including the wait and the CAPTCHA.
+- If Rapidgator refuses anonymous access from your address (an access check
+  or an address restriction), the download fails with `anonymous_unavailable`.
+  FETCH does not work around it.
+
+### With an account
 
 1. **Providers > Rapidgator > Add credentials**: account e-mail and password
    (and a current two-factor code if the account uses one).
 2. **Test connection** shows whether the login works and what Rapidgator
    reports about the account (Premium status, traffic left).
 
-What to expect:
-
 - Rapidgator only hands out API download links to accounts whose plan allows
-  it. In practice that means an active Premium subscription.
-- Without an account, or with a free account, Rapidgator's own website flow
-  requires a waiting period and an interactive CAPTCHA. FETCH does not
-  automate that flow. Such links fail with `captcha_required` and the message
-  says so.
+  it. In practice that means an active Premium subscription. A free account
+  is reported as `premium_only`; set the mode to **Anonymous** to use the free
+  download instead.
 - Daily traffic and storage quotas reported by Rapidgator are shown as
   `quota_exceeded`; announced delays are waited out.
 - The session token is reused and renewed when it expires; the password is
   stored encrypted and never logged.
-- **This adapter has not been confirmed against the live service or a real
-  Premium account.** It follows the published API and passes tests against an
-  emulation of it. If Rapidgator's API behaves differently, the download fails
-  with the provider's own message, which is recorded under
-  **Providers > Rapidgator > Events**.
+
+### Verification
+
+**Neither mode has been confirmed against the live service.** The account mode
+follows the published API. The anonymous mode follows Rapidgator's public
+free-download pages as they were known when this was written; Rapidgator
+changes those pages from time to time. Both pass tests against a local
+emulation. Whenever a page does not look as expected, FETCH stops with
+`unexpected_response` rather than guess, and records it under
+**Providers > Rapidgator > Events**. Which kind of CAPTCHA Rapidgator currently
+serves has not been observed; if it is a widget, the paste-the-address path
+above is the one that applies.
+
+To try the live service yourself, upload a small file of your own to
+Rapidgator and run:
+
+```
+cd backend
+set FETCH_LIVE_RAPIDGATOR_URL=https://rapidgator.net/file/...
+python -m pytest tests/test_live_providers.py -q
+```
+
+That test only reads the public page of your file (name, size, availability).
 
 ## Status codes
 
@@ -142,11 +215,13 @@ What to expect:
 |---|---|---|
 | `unsupported_link` | The link type is not supported (folder, malformed, ...) | no |
 | `not_found` | The file does not exist or was removed | no |
-| `auth_required` | A login, API key or permission is needed | no |
-| `auth_failed` | The stored credentials were rejected | no |
-| `captcha_required` | The provider demands a CAPTCHA | no |
-| `quota_exceeded` | A provider or FETCH quota is exhausted | no |
-| `wait_required` | The provider announced a waiting period | continues after the wait |
+| `auth_required` | An account is needed and none is configured (or the chosen mode has none) | no |
+| `auth_failed` | The stored credentials were rejected (invalid credentials) | no |
+| `anonymous_unavailable` | The provider does not offer, or refused, access without an account | no |
+| `premium_only` | The file, or an API download of it, is only available to Premium accounts | no |
+| `captcha_required` | The provider demands a CAPTCHA. The download waits for you to complete it; it fails if you do not, or if the answer is rejected three times | waits for you |
+| `quota_exceeded` | A provider quota (for example Rapidgator's daily limit) or a FETCH quota is exhausted | no |
+| `wait_required` | The provider announced a waiting period (free-download timer, delay between downloads, hourly limit, one-at-a-time limit) | continues after the wait |
 | `rate_limited` | Too many requests | yes |
 | `provider_unavailable` | Temporary provider or server error | yes |
 | `network_error` | Connection problem or interrupted transfer | yes |
@@ -167,6 +242,7 @@ class ExampleProvider(ProviderAdapter):
     description = "Public example.com file links."
     priority = 20                      # lower runs first; Direct is the fallback
     capabilities = Capabilities(checksum=True)
+    auth_modes = (AuthMode.ANONYMOUS, AuthMode.ACCOUNT)   # declare every mode you support
     credential_fields = (CredentialField("api_key", "API key"),)
     notes = ("Single-file links only.",)
     verification = "State honestly how this was tested."

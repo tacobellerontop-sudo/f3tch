@@ -162,6 +162,8 @@ class Provider(Base):
     health_message: Mapped[str] = mapped_column(Text, default="")
     checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    # Preferred authentication mode: "auto" | "anonymous" | "account".
+    auth_mode: Mapped[str] = mapped_column(String(16), default="auto", server_default="auto")
 
     credential: Mapped[ProviderCredential | None] = relationship(
         back_populates="provider", uselist=False, cascade="all, delete-orphan"
@@ -182,6 +184,10 @@ class ProviderCredential(Base):
     updated_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Outcome of the last check of this account: NULL = never checked.
+    valid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    validation_message: Mapped[str] = mapped_column(Text, default="", server_default="")
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     provider: Mapped[Provider] = relationship(back_populates="credential")
 

@@ -14,6 +14,7 @@ periods, quotas): those conditions are reported to the user instead.
 
 from __future__ import annotations
 
+import enum
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
@@ -26,11 +27,31 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..engine.transfer import Transfer
 
 
+class AuthMode(enum.StrEnum):
+    """How FETCH identifies itself to a provider for one request."""
+
+    #: No provider credentials at all.
+    ANONYMOUS = "anonymous"
+    #: The account stored for this provider on this FETCH installation.
+    ACCOUNT = "account"
+
+
+#: Preference value meaning "pick the best available mode for me".
+AUTO_MODE = "auto"
+
+
 class ErrorCode:
     UNSUPPORTED = "unsupported_link"
+    #: The file is unavailable: deleted, never existed, or blocked.
     NOT_FOUND = "not_found"
+    #: This provider (or the mode the user chose) needs an account and none is configured.
     AUTH_REQUIRED = "auth_required"
+    #: The configured credentials were rejected.
     AUTH_FAILED = "auth_failed"
+    #: The provider does not offer (or refused) access without an account.
+    ANON_UNAVAILABLE = "anonymous_unavailable"
+    #: The file can only be downloaded with a Premium account.
+    PREMIUM_ONLY = "premium_only"
     CAPTCHA_REQUIRED = "captcha_required"
     QUOTA_EXCEEDED = "quota_exceeded"
     WAIT_REQUIRED = "wait_required"
@@ -53,6 +74,7 @@ class ProviderError(Exception):
         *,
         retryable: bool = False,
         wait_seconds: float | None = None,
+        challenge: CaptchaChallenge | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -60,6 +82,33 @@ class ProviderError(Exception):
         self.retryable = retryable
         # Set when the provider imposes a waiting period that FETCH will honour.
         self.wait_seconds = wait_seconds
+        # Set with ``captcha_required`` when the owner of the download can complete
+        # the challenge themselves. FETCH only relays it; it never solves it.
+        self.challenge = challenge
+
+
+@dataclass
+class CaptchaChallenge:
+    """A CAPTCHA the provider demands, to be completed by the person downloading.
+
+    ``kind`` is ``"image"`` when the provider served a picture whose text the
+    user can type into FETCH, or ``"external"`` when the challenge only works
+    on the provider's own website (for example a widget bound to its domain).
+    FETCH never solves, forwards to a solving service, or skips a challenge.
+    """
+
+    kind: str
+    prompt: str
+    #: Seconds the user has before the provider's challenge goes stale.
+    expires_in: float = 300.0
+    image: bytes = b""
+    image_type: str = "image/png"
+    #: Page on the provider's site where the user can complete it themselves.
+    page_url: str = ""
+    #: Whether the user may hand FETCH the download address the provider gave
+    #: them after they completed the challenge in their own browser.
+    accepts_download_url: bool = False
+    attempt: int = 1
 
 
 @dataclass(frozen=True)
@@ -77,7 +126,8 @@ class Capabilities:
     checksum: bool = False
     #: May impose waiting periods that FETCH waits out (never skips).
     waits: bool = False
-    #: May demand a CAPTCHA, which FETCH reports and does not solve.
+    #: May demand a CAPTCHA. FETCH reports it and never solves it; where the
+    #: provider's challenge allows, the user can complete it themselves.
     captcha: bool = False
 
 
@@ -101,6 +151,10 @@ class LinkInfo:
     #: Machine-readable reason when ``supported`` is false or a restriction applies.
     restriction: str = ""
     message: str = ""
+    #: The provider only serves this file to Premium accounts.
+    premium_only: bool = False
+    #: Authentication mode the link was inspected with ("" when none applied).
+    auth_mode: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -143,8 +197,16 @@ class ProviderContext:
     """Per-call services handed to an adapter."""
 
     http: HttpClient
+    #: Decrypted credentials of the mode in use; ``None`` in anonymous mode.
     credentials: dict[str, str] | None = None
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("fetch.provider"))
+    auth_mode: str = AuthMode.ANONYMOUS.value
+    #: The download job, when the call belongs to one (lets adapters keep the
+    #: provider's own session across a waiting period or a CAPTCHA).
+    job_id: int | None = None
+    #: What the job's owner supplied for a pending challenge, if anything:
+    #: ``{"answer": ...}`` or ``{"download_url": ...}``.
+    user_input: dict[str, str] | None = None
 
 
 class ProviderAdapter(ABC):
@@ -158,6 +220,8 @@ class ProviderAdapter(ABC):
     #: Lower numbers are asked first by the registry.
     priority: int = 100
     capabilities: Capabilities = Capabilities()
+    #: Authentication modes this provider supports. Every adapter declares them.
+    auth_modes: tuple[AuthMode, ...] = (AuthMode.ANONYMOUS,)
     credential_fields: tuple[CredentialField, ...] = ()
     #: Plain-language notes about limits, shown on the Providers page.
     notes: tuple[str, ...] = ()
@@ -177,6 +241,36 @@ class ProviderAdapter(ABC):
         """Look up the file behind ``url`` without downloading it."""
 
     # -- authentication --------------------------------------------------------
+
+    def supported_auth_modes(self) -> tuple[AuthMode, ...]:
+        return tuple(self.auth_modes)
+
+    def anonymous_available(self) -> bool:
+        """Whether the provider can be used with no credentials at all."""
+        return AuthMode.ANONYMOUS in self.auth_modes
+
+    def authentication_required(self) -> bool:
+        """Whether nothing can be downloaded until some account is configured."""
+        return not self.anonymous_available()
+
+    def accepts_accounts(self) -> bool:
+        return AuthMode.ACCOUNT in self.auth_modes
+
+    async def validate_account(self, ctx: ProviderContext) -> HealthReport:
+        """Whether the account in ``ctx.credentials`` is accepted by the provider."""
+        if not ctx.credentials:
+            return HealthReport(ok=False, message="No account is configured.")
+        return await self.authenticate(ctx)
+
+    async def link_requires_premium(self, url: str, ctx: ProviderContext) -> bool:
+        """Whether the provider only serves ``url`` to Premium accounts."""
+        try:
+            info = await self.inspect(url, ctx)
+        except ProviderError as exc:
+            if exc.code == ErrorCode.PREMIUM_ONLY:
+                return True
+            raise
+        return info.premium_only or info.restriction == ErrorCode.PREMIUM_ONLY
 
     async def authenticate(self, ctx: ProviderContext) -> HealthReport:
         """Validate the stored credentials. Default: provider takes none."""
@@ -216,6 +310,17 @@ class ProviderAdapter(ABC):
         """
         await transfer.fetch(resolved)
 
+    def check_download_address(self, url: str) -> str | None:
+        """Why ``url`` cannot be a download address of this provider, or ``None``.
+
+        Used when a user hands over the address the provider issued to them
+        after they completed its CAPTCHA in their own browser.
+        """
+        return "This provider does not accept a download address."
+
+    def release_job(self, job_id: int) -> None:
+        """Forget any provider session kept for ``job_id`` (cancelled, removed, failed)."""
+
     # -- job control (delegated to the download manager) -----------------------
 
     def get_status(self, job_id: int) -> dict[str, Any] | None:
@@ -236,6 +341,7 @@ class ProviderAdapter(ABC):
             "description": self.description,
             "homepage": self.homepage,
             "capabilities": asdict(self.capabilities),
+            "auth_modes": [mode.value for mode in self.auth_modes],
             "notes": list(self.notes),
             "verification": self.verification,
             "credential_fields": [asdict(f) for f in self.credential_fields],

@@ -34,7 +34,7 @@ from ..models import (
     DownloadState,
     FileRecord,
 )
-from ..providers.base import ErrorCode, ProviderError
+from ..providers.base import CaptchaChallenge, ErrorCode, ProviderError
 from ..providers.registry import ProviderRegistry
 from ..schemas import serialize_download
 from ..settings_service import GB, SettingsService
@@ -63,8 +63,9 @@ _STATE_EVENTS = {
 _PROVIDER_ERROR_CODES = {
     ErrorCode.AUTH_FAILED, ErrorCode.AUTH_REQUIRED, ErrorCode.CAPTCHA_REQUIRED,
     ErrorCode.QUOTA_EXCEEDED, ErrorCode.UNAVAILABLE, ErrorCode.PROTOCOL,
-    ErrorCode.RATE_LIMITED, ErrorCode.WAIT_REQUIRED,
+    ErrorCode.RATE_LIMITED, ErrorCode.WAIT_REQUIRED, ErrorCode.ANON_UNAVAILABLE,
 }
+CAPTCHA_WAIT_REASON = "Waiting for you to complete the provider's CAPTCHA."
 
 
 class JobHandle:
@@ -120,6 +121,11 @@ class DownloadManager:
         self.aria2 = aria2
         self._active: dict[int, JobHandle] = {}
         self._limiter = RateLimiter()
+        # CAPTCHA challenges waiting for their download's owner, and what the
+        # owner supplied for them. Memory only: a provider's challenge does not
+        # survive a restart anyway.
+        self._captchas: dict[int, tuple[CaptchaChallenge, float]] = {}
+        self._inputs: dict[int, dict[str, str]] = {}
         self._wake = asyncio.Event()
         # Serialises scheduling passes with pause/cancel/remove so a control
         # request can never slip between a job being picked and being tracked.
@@ -389,7 +395,11 @@ class DownloadManager:
             raise ProviderError(
                 ErrorCode.DISABLED, f"The {provider.name} provider is switched off on the Providers page."
             )
-        ctx = await asyncio.to_thread(self.registry.context, provider)
+        self._captchas.pop(job_id, None)
+        user_input = self._inputs.pop(job_id, None)
+        ctx = await asyncio.to_thread(
+            lambda: self.registry.context(provider, job_id=job_id, user_input=user_input)
+        )
 
         # --- Inspecting: run the provider's own workflow -----------------------
         resolved = await provider.resolve(job["url"], ctx)
@@ -520,6 +530,7 @@ class DownloadManager:
 
         row = await self._db(complete)
         await asyncio.to_thread(self.storage.remove_job_temp, job_id)
+        await asyncio.to_thread(self.registry.mark_reachable, provider.id)
         self.publish_download(row)
         self.bus.publish("storage.changed", {"scope": scope}, user_id=user_id,
                          audience="all" if scope == "shared" else "owner")
@@ -606,6 +617,7 @@ class DownloadManager:
             row = await self._db(save)
             if reason in ("cancel", "remove"):
                 await asyncio.to_thread(self.storage.remove_job_temp, job_id)
+                self._release_provider_session(job_id)
             if row is not None:
                 log.info("Download %s", target.value, extra={"job_id": job_id, "reason": reason})  # type: ignore[union-attr]
                 if reason != "shutdown":
@@ -628,7 +640,14 @@ class DownloadManager:
             row.avg_speed_bps = handle.average
             row.active_seconds = handle.active_seconds
             row.error_code, row.error_message = exc.code, exc.message
-            if exc.wait_seconds is not None:
+            if exc.challenge is not None:
+                # The provider demands a CAPTCHA its user can complete. The job
+                # waits for them; FETCH itself does nothing with the challenge.
+                outcome = "captcha"
+                row.state = S.WAITING.value
+                row.wait_until = utcnow() + timedelta(seconds=max(1.0, exc.challenge.expires_in))
+                row.wait_reason = CAPTCHA_WAIT_REASON
+            elif exc.wait_seconds is not None:
                 outcome = "waiting"
                 row.state = S.WAITING.value
                 row.wait_until = utcnow() + timedelta(seconds=max(1.0, exc.wait_seconds))
@@ -647,11 +666,15 @@ class DownloadManager:
                 row.finished_at = utcnow()
             return row, outcome
 
+        if exc.challenge is not None:
+            self._captchas[job_id] = (exc.challenge, time.time() + exc.challenge.expires_in)
         try:
             row, outcome = await self._db(save)
         except Exception:
             log.exception("Could not record a download failure", extra={"job_id": job_id})
             return
+        if outcome == "failed":
+            self._release_provider_session(job_id)
         self.publish_download(row)
         level = "error" if outcome == "failed" else "warning"
         provider_issue = exc.code in _PROVIDER_ERROR_CODES and row.provider != "direct"
@@ -664,8 +687,68 @@ class DownloadManager:
             detail={"code": exc.code, "provider": row.provider, "download_id": job_id,
                     "attempts": row.attempts},
         )
-        if provider_issue and exc.code in (ErrorCode.AUTH_FAILED, ErrorCode.UNAVAILABLE):
+        if not provider_issue:
+            return
+        if exc.code == ErrorCode.AUTH_FAILED:
+            await asyncio.to_thread(self.registry.mark_account, row.provider, False, exc.message)
             await asyncio.to_thread(self.registry.record_health, row.provider, False, exc.message)
+        elif exc.code == ErrorCode.UNAVAILABLE:
+            await asyncio.to_thread(
+                lambda: self.registry.record_health(
+                    row.provider, False, exc.message, unavailable=True
+                )
+            )
+
+    def _release_provider_session(self, job_id: int) -> None:
+        """The job ended: drop its challenge and any session a provider kept for it."""
+        self._captchas.pop(job_id, None)
+        self._inputs.pop(job_id, None)
+        for provider in self.registry.all():
+            with contextlib.suppress(Exception):
+                provider.release_job(job_id)
+
+    # ------------------------------------------------------------------ CAPTCHA
+
+    def captcha(self, job_id: int) -> CaptchaChallenge | None:
+        """The challenge waiting for this download's owner, if it is still valid."""
+        entry = self._captchas.get(job_id)
+        if entry is None:
+            return None
+        return entry[0] if entry[1] > time.time() else None
+
+    def captcha_expires_at(self, job_id: int) -> float | None:
+        entry = self._captchas.get(job_id)
+        return entry[1] if entry else None
+
+    async def submit_captcha(self, job_id: int, values: dict[str, str]) -> Download | None:
+        """Hand the owner's own answer to the provider and let the job continue."""
+        async with self._lock:
+            if self.captcha(job_id) is None:
+                return None
+
+            def apply(row: Download) -> None:
+                row.state = S.QUEUED.value
+                row.wait_until, row.wait_reason = None, ""
+
+            def run(session: Session) -> Download | None:
+                row = session.get(Download, job_id)
+                if (
+                    row is None or row.state != S.WAITING.value
+                    or row.error_code != ErrorCode.CAPTCHA_REQUIRED
+                ):
+                    return None
+                apply(row)
+                session.flush()
+                return row
+
+            row = await self._db(run)
+            if row is None:
+                return None
+            self._inputs[job_id] = values
+            self.publish_download(row)
+            self.bus.publish("queue.changed", {}, audience="all")
+            self.wake()
+            return row
 
     # ----------------------------------------------------------------- controls
 
@@ -741,6 +824,7 @@ class DownloadManager:
             row = await self._transition(job_id, (S.PENDING, S.QUEUED, S.WAITING, S.PAUSED), apply)
             if row is not None and row.state == S.CANCELLED.value:
                 await asyncio.to_thread(self.storage.remove_job_temp, job_id)
+                self._release_provider_session(job_id)
                 self.publish_download(row)
         self.bus.publish("queue.changed", {}, audience="all")
         self.wake()
@@ -776,17 +860,19 @@ class DownloadManager:
             self.bus.publish("queue.changed", {}, audience="all")
             return True
 
-        def run(session: Session) -> int | None:
+        def run(session: Session) -> tuple[int, str] | None:
             row = session.get(Download, job_id)
             if row is None:
                 return None
-            user_id = row.user_id
+            owner = (row.user_id, row.provider)
             session.delete(row)
-            return user_id
+            return owner
 
-        user_id = await self._db(run)
-        if user_id is None:
+        owner = await self._db(run)
+        if owner is None:
             return False
+        user_id = owner[0]
+        self._release_provider_session(job_id)
         await asyncio.to_thread(self.storage.remove_job_temp, job_id)
         self.bus.publish("download.removed", {"id": job_id}, user_id=user_id)
         self.bus.publish("queue.changed", {}, audience="all")

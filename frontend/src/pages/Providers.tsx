@@ -15,6 +15,7 @@ import {
   Notice,
   PageHeader,
   PageLoader,
+  Select,
   Spinner,
   Switch,
   Textarea,
@@ -24,7 +25,7 @@ import { api, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatRelative } from "@/lib/format";
 import { useProviders } from "@/lib/queries";
-import type { Capabilities, Provider, ProviderError, ProviderTestResult } from "@/lib/types";
+import type { AuthPreference, Capabilities, Provider, ProviderError, ProviderTestResult } from "@/lib/types";
 
 const CAPABILITY_LABELS: [keyof Capabilities, string][] = [
   ["inspect", "Link inspection"],
@@ -36,11 +37,37 @@ const CAPABILITY_LABELS: [keyof Capabilities, string][] = [
   ["folders", "Folder links"],
 ];
 
-function statusOf(provider: Provider): { label: string; tone: "success" | "warning" | "neutral" | "danger" } {
+type Tone = "success" | "warning" | "neutral" | "danger";
+
+const MODE_LABELS: Record<AuthPreference, string> = {
+  auto: "Automatic (account if stored, otherwise anonymous)",
+  anonymous: "Anonymous (no account)",
+  account: "Stored account",
+};
+
+function statusOf(provider: Provider): { label: string; tone: Tone } {
+  const auth = provider.auth;
   if (!provider.enabled) return { label: "Disabled", tone: "neutral" };
-  if (!provider.ready) return { label: "Needs credentials", tone: "warning" };
+  if (auth?.status === "unavailable") return { label: "Provider unavailable", tone: "danger" };
+  if (auth?.status === "auth_required" || !provider.ready) return { label: "Authentication required", tone: "warning" };
   if (provider.health === "error") return { label: "Last test failed", tone: "danger" };
+  if (auth?.status === "account") return { label: "Using stored account", tone: "success" };
+  if (auth?.status === "anonymous") return { label: "Using anonymous access", tone: "success" };
   return { label: "Ready", tone: "success" };
+}
+
+/** What is available and configured for signing in. Never shows credentials. */
+function authBadges(provider: Provider): { label: string; tone: Tone }[] {
+  const auth = provider.auth;
+  if (!auth) return [];
+  const badges: { label: string; tone: Tone }[] = [];
+  if (auth.anonymous_available) badges.push({ label: "Anonymous access available", tone: "neutral" });
+  if (auth.modes.includes("account")) {
+    if (!auth.account_configured) badges.push({ label: "No account stored", tone: "neutral" });
+    else if (auth.account_valid === false) badges.push({ label: "Account rejected", tone: "danger" });
+    else badges.push({ label: auth.account_valid ? "Account configured and verified" : "Account configured", tone: "success" });
+  }
+  return badges;
 }
 
 function CredentialsDialog({ provider, onClose }: { provider: Provider | null; onClose: () => void }) {
@@ -211,6 +238,15 @@ function ProviderCard({ provider, onCredentials, onErrors }: { provider: Provide
     onError: (error) => toast.error(error),
   });
 
+  const mode = useMutation({
+    mutationFn: (value: AuthPreference) => api.put<Provider>(`/providers/${provider.id}/auth-mode`, { mode: value }),
+    onSuccess: refresh,
+    onError: (error) => toast.error(error),
+  });
+  const auth = provider.auth;
+  const badges = authBadges(provider);
+  const modeChoices: AuthPreference[] = auth && auth.modes.length > 1 ? ["auto", ...auth.modes] : [];
+
   const account = Object.entries(result?.account ?? {}).filter(([, value]) => value !== null && value !== "");
   const canConfigure = (provider.credential_fields?.length ?? 0) > 0;
 
@@ -246,7 +282,42 @@ function ProviderCard({ provider, onCredentials, onErrors }: { provider: Provide
         <div className="mt-3 flex flex-wrap gap-1.5">
           {provider.capabilities.requires_credentials && <Badge tone="warning">Requires an account</Badge>}
           {provider.capabilities.waits && <Badge>May impose waiting periods</Badge>}
-          {provider.capabilities.captcha && <Badge>CAPTCHA links are not downloaded</Badge>}
+          {provider.capabilities.captcha && <Badge>CAPTCHAs are completed by you, never by FETCH</Badge>}
+        </div>
+      )}
+
+      {auth && (
+        <div className="mt-4 rounded border border-line px-3 py-2.5" aria-label={`${provider.name} sign-in`}>
+          <p className="text-xs font-medium text-muted">Sign-in</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {badges.map((badge) => (
+              <Badge key={badge.label} tone={badge.tone}>
+                {badge.label}
+              </Badge>
+            ))}
+          </div>
+          {auth.message && <p className="mt-2 text-xs leading-5 text-warning">{auth.message}</p>}
+          {auth.account_configured && auth.account_valid === false && auth.account_message && (
+            <p className="mt-2 text-xs leading-5 text-danger">{auth.account_message}</p>
+          )}
+          {modeChoices.length > 0 && (
+            <label className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-muted">
+              Mode
+              <Select
+                aria-label={`Sign-in mode for ${provider.name}`}
+                className="min-w-0 flex-1"
+                value={auth.preference}
+                disabled={mode.isPending}
+                onChange={(event) => mode.mutate(event.target.value as AuthPreference)}
+              >
+                {modeChoices.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {MODE_LABELS[choice]}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
         </div>
       )}
 
@@ -329,8 +400,9 @@ export function ProvidersPage() {
         description="What each link source supports, and the accounts FETCH may use for it."
       />
       <Notice className="mb-4">
-        FETCH only downloads what a provider permits for the link and account in use. It does not solve CAPTCHAs, skip
-        waiting periods, or work around Premium and quota limits.
+        FETCH only downloads what a provider permits for the link and account in use. It never solves CAPTCHAs (you
+        complete them yourself when a provider asks), and it does not skip waiting periods or work around Premium and
+        quota limits.
       </Notice>
       {providers.isPending ? (
         <PageLoader />

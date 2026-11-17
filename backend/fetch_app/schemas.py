@@ -124,5 +124,16 @@ class ProviderPatchIn(BaseModel):
     enabled: bool
 
 
+class AuthModeIn(BaseModel):
+    mode: Literal["auto", "anonymous", "account"]
+
+
+class CaptchaIn(BaseModel):
+    """What the owner of a download supplies for a provider's CAPTCHA."""
+
+    answer: str = Field("", max_length=200)
+    download_url: str = Field("", max_length=4096)
+
+
 class CredentialsIn(BaseModel):
     values: dict[str, str]

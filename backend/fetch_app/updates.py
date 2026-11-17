@@ -2,7 +2,7 @@
 
 The check is one anonymous ``GET`` to GitHub's public API for the configured
 repository; nothing about this installation is sent. Installing an update is
-never automatic: an administrator starts it.
+never automatic: the person using FETCH starts it.
 
 How it is installed depends on how FETCH runs:
 

@@ -61,6 +61,22 @@ export interface Download {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** Set by the REST API when the download waits for its owner. */
+  action_required?: "captcha" | "";
+}
+
+/** A provider CAPTCHA that the user completes themselves. FETCH never solves it. */
+export interface CaptchaChallenge {
+  download_id: number;
+  provider: string;
+  /** "image": type the characters here. "external": only works on the provider's site. */
+  kind: "image" | "external";
+  prompt: string;
+  has_image: boolean;
+  page_url: string;
+  accepts_download_url: boolean;
+  attempt: number;
+  expires_at: string | null;
 }
 
 export interface Progress {
@@ -98,6 +114,8 @@ export interface LinkInfo {
   resumable: boolean | null;
   restriction: string;
   message: string;
+  premium_only?: boolean;
+  auth_mode?: string;
 }
 
 export interface SubmitResult {
@@ -152,6 +170,26 @@ export interface CredentialField {
   help: string;
 }
 
+export type AuthMode = "anonymous" | "account";
+export type AuthPreference = "auto" | AuthMode;
+
+/** How FETCH signs in to a provider. Never contains credentials. */
+export interface ProviderAuth {
+  modes: AuthMode[];
+  authentication_required: boolean;
+  anonymous_available: boolean;
+  account_configured: boolean;
+  /** Result of the last account check; null when it was never checked. */
+  account_valid: boolean | null;
+  account_message: string;
+  preference: AuthPreference;
+  effective_mode: AuthMode | null;
+  provider_available: boolean;
+  status: AuthMode | "auth_required" | "unavailable";
+  problem_code: string;
+  message: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -163,8 +201,10 @@ export interface Provider {
   enabled: boolean;
   configured: boolean;
   ready: boolean;
+  auth_modes?: AuthMode[];
+  auth?: ProviderAuth;
   credential_fields?: CredentialField[];
-  health?: "ok" | "error" | "unknown";
+  health?: "ok" | "error" | "unknown" | "unavailable";
   health_message?: string;
   checked_at?: string | null;
   credential_fields_set?: string[];
