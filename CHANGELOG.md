@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Multi-connection downloads without aria2.** Files of 2 MB or more are
+  split into parts fetched over up to 32 connections at once (8 by default,
+  **Settings > Downloads > Connections per file**). A connection that
+  finishes early takes over half of the slowest part. Every part's progress
+  is saved, so pause and resume, crashes and lost connections continue where
+  each part stopped. Servers without range support fall back to one
+  connection.
+- **YouTube and media sites** through yt-dlp: YouTube, Vimeo, SoundCloud,
+  TikTok, Twitch, X, Reddit, Instagram and more. Choose best, 4K to 480p or
+  audio only under **Settings > Downloads**. Optional cookies for
+  age-restricted or members-only videos.
+- **Dropbox, MediaFire and WeTransfer** share links.
+- Spotify, Apple Music, Tidal and Deezer links are answered with a clear
+  explanation: their music is DRM-protected and FETCH does not remove DRM.
+
+### Changed
+
+- aria2 now uses 8 connections per file by default (was 4) on new installs.
+
 ## [2.0.0] - 2026-11-17
 
 FETCH is now a desktop app for your own PC, without accounts.

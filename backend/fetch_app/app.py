@@ -96,6 +96,7 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
     registry = ProviderRegistry(db, http, box, providers)
     registry.sync()
     proxy = GuardProxy(guard)
+    registry.proxy = proxy
     downloads_settings = settings.get().downloads
     executable = find_aria2(downloads_settings.aria2_path, boot.home) if downloads_settings.use_aria2 else None
     aria2 = Aria2Service(executable, boot.data_dir, proxy)

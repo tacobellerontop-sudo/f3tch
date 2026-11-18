@@ -85,6 +85,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Disposition", f'attachment; filename="{server.disposition}"')
         if kind == "html":
             self.send_header("Content-Type", "text/html; charset=utf-8")
+        elif kind == "video":
+            self.send_header("Content-Type", "video/mp4")
         else:
             self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
