@@ -18,6 +18,9 @@
 - **Dropbox, MediaFire and WeTransfer** share links.
 - Spotify, Apple Music, Tidal and Deezer links are answered with a clear
   explanation: their music is DRM-protected and FETCH does not remove DRM.
+- Delete activity: each entry on the Activity page has a delete button, and
+  **Clear activity** deletes the whole log (or, with filters set, only the
+  matching entries) after asking. Downloads and files are not touched.
 
 ### Changed
 

@@ -1,9 +1,9 @@
-import { History, Search } from "lucide-react";
+import { History, Search, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Card, EmptyState, ErrorNote, Input, PageHeader, PageLoader, Pagination, Select } from "@/components/ui";
+import { Button, Card, ConfirmDialog, EmptyState, ErrorNote, Input, PageHeader, PageLoader, Pagination, Select, useToast } from "@/components/ui";
 import { errorMessage } from "@/lib/api";
-import { useActivity } from "@/lib/queries";
+import { useActivity, useClearActivity, useDeleteActivity } from "@/lib/queries";
 
 import { ActivityList } from "./Overview";
 
@@ -35,10 +35,46 @@ export function ActivityPage() {
   const activity = useActivity({ page, page_size: PAGE_SIZE, category, level, q });
   const items = activity.data?.items ?? [];
   const filtered = Boolean(category || level || q);
+  const total = activity.data?.total ?? 0;
+
+  const toast = useToast();
+  const remove = useDeleteActivity();
+  const clear = useClearActivity();
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const deleteOne = (id: number) =>
+    remove.mutate(id, {
+      onSuccess: () => {
+        // Deleting the last entry on a later page: step back so the list is not empty.
+        if (items.length === 1 && page > 1) setPage(page - 1);
+      },
+      onError: (error) => toast.error(error),
+    });
+
+  const clearAll = () =>
+    clear.mutate(
+      { category, level, q },
+      {
+        onSuccess: (result) => {
+          setPage(1);
+          toast.success(result.deleted === 1 ? "Deleted 1 activity entry." : `Deleted ${result.deleted} activity entries.`);
+        },
+        onError: (error) => toast.error(error),
+        onSettled: () => setConfirmClear(false),
+      },
+    );
 
   return (
     <>
-      <PageHeader title="Activity" description="Everything FETCH did: downloads, file changes and settings." />
+      <PageHeader
+        title="Activity"
+        description="Everything FETCH did: downloads, file changes and settings."
+        actions={
+          <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} disabled={total === 0} onClick={() => setConfirmClear(true)}>
+            {filtered ? "Delete matching" : "Clear activity"}
+          </Button>
+        }
+      />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[12rem] flex-1 sm:max-w-xs">
@@ -90,13 +126,30 @@ export function ActivityPage() {
           />
         ) : (
           <>
-            <ActivityList items={items} />
+            <ActivityList items={items} onDelete={(item) => deleteOne(item.id)} deleting={remove.isPending ? remove.variables : null} />
             <div className="border-t border-line">
               <Pagination page={page} pageSize={PAGE_SIZE} total={activity.data?.total ?? 0} onPage={setPage} />
             </div>
           </>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={confirmClear}
+        onClose={() => setConfirmClear(false)}
+        title={filtered ? "Delete matching activity?" : "Clear all activity?"}
+        message={
+          filtered
+            ? `The ${total === 1 ? "entry" : `${total} entries`} matching these filters will be deleted. Other activity stays.`
+            : `All ${total === 1 ? "1 entry" : `${total} entries`} will be deleted.`
+        }
+        confirmLabel={filtered ? "Delete matching" : "Clear activity"}
+        destructive
+        loading={clear.isPending}
+        onConfirm={clearAll}
+      >
+        <p>This only removes the activity log. Downloads and files are not touched.</p>
+      </ConfirmDialog>
     </>
   );
 }
