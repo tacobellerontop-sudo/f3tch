@@ -28,6 +28,7 @@ from .config import BootConfig, load_config
 from .context import AppContext
 from .db import Database, run_migrations
 from .engine.aria2 import Aria2Service, find_aria2
+from .clipboard import ClipboardWatcher, default_reader
 from .engine.guardproxy import GuardProxy
 from .engine.http import HttpClient
 from .engine.netpaths import NetworkPaths
@@ -110,7 +111,11 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
         db=db, settings=settings, storage=storage, registry=registry, http=http,
         bus=bus, activity=activity, aria2=aria2, netpaths=netpaths,
     )
+    clipboard = ClipboardWatcher(
+        bus=bus, registry=registry, settings=settings, reader=default_reader()
+    )
     return AppContext(
+        clipboard=clipboard,
         boot=boot, db=db, settings=settings, bus=bus, activity=activity, storage=storage,
         guard=guard, http=http, box=box, registry=registry, proxy=proxy, aria2=aria2,
         manager=manager, updates=UpdateService(boot, http), netpaths=netpaths,
@@ -140,6 +145,7 @@ def create_app(boot: BootConfig | None = None, providers: list[ProviderAdapter] 
             await ctx.aria2.start()
         await ctx.netpaths.start()
         await ctx.manager.start()
+        ctx.clipboard.start()
         housekeeping = asyncio.create_task(_maintenance_loop(ctx), name="fetch-maintenance")
         log.info("FETCH started", extra={"version": __version__, "storage_root": str(ctx.storage.root)})
         await asyncio.to_thread(ctx.activity.record, "system", "startup", f"FETCH {__version__} started")
@@ -149,6 +155,7 @@ def create_app(boot: BootConfig | None = None, providers: list[ProviderAdapter] 
             housekeeping.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await housekeeping
+            await ctx.clipboard.stop()
             await ctx.manager.stop()
             await ctx.netpaths.stop()
             await ctx.aria2.stop()

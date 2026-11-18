@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-18
+
 ### Added
 
 - **Multi-connection downloads without aria2.** Files of 2 MB or more are
@@ -25,6 +27,17 @@
 - **Live network speed panel** on the Overview: a scrolling chart of the
   last minute stacked by connection, and a lane per connection with its
   speed, share and a flow that speeds up with its traffic.
+- **Link grabbing.** Copy download links anywhere on your PC and FETCH offers
+  to add them. **Add download** now finds the links in any pasted text, and
+  each link can be unticked before adding. Turn clipboard watching off under
+  **Settings > General**.
+- **Auto-extract.** Finished .zip, .7z, .rar and .tar downloads, including
+  multi-part sets, are unpacked into a folder next to them (7-Zip needed for
+  .7z and .rar). Optionally delete the archive afterwards.
+- **Download schedule.** Only download during chosen hours and days, for
+  example overnight. Outside them the queue waits and running downloads
+  pause and continue later. **Settings > Downloads > Only download at
+  certain times.**
 - Spotify, Apple Music, Tidal and Deezer links are answered with a clear
   explanation: their music is DRM-protected and FETCH does not remove DRM.
 - Delete activity: each entry on the Activity page has a delete button, and
