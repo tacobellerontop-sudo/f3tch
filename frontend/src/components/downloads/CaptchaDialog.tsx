@@ -1,9 +1,9 @@
-import { ExternalLink } from "lucide-react";
+import { AppWindow, ExternalLink } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { Button, Dialog, ErrorNote, Field, Input, Notice, PageLoader, useToast } from "@/components/ui";
 import { buildUrl, errorMessage } from "@/lib/api";
-import { useCaptcha, useSubmitCaptcha } from "@/lib/queries";
+import { useCaptcha, useOpenCaptchaWindow, useSubmitCaptcha } from "@/lib/queries";
 import type { Download } from "@/lib/types";
 
 interface Props {
@@ -19,6 +19,7 @@ export function CaptchaDialog({ download, onClose }: Props) {
   const toast = useToast();
   const captcha = useCaptcha(download?.id ?? null);
   const submit = useSubmitCaptcha();
+  const openWindow = useOpenCaptchaWindow();
   const [answer, setAnswer] = useState("");
   const [address, setAddress] = useState("");
   const challenge = captcha.data;
@@ -27,6 +28,7 @@ export function CaptchaDialog({ download, onClose }: Props) {
     setAnswer("");
     setAddress("");
     submit.reset();
+    openWindow.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [download?.id, challenge?.attempt]);
 
@@ -43,6 +45,13 @@ export function CaptchaDialog({ download, onClose }: Props) {
         },
       },
     );
+  };
+
+  const openInApp = () => {
+    if (!download) return;
+    openWindow.mutate(download.id, {
+      onSuccess: () => toast.success("Complete the CAPTCHA in the window that opened. The download continues by itself."),
+    });
   };
 
   const canSend = address.trim() !== "" || (challenge?.kind === "image" && answer.trim() !== "");
@@ -72,7 +81,21 @@ export function CaptchaDialog({ download, onClose }: Props) {
         </ErrorNote>
       ) : (
         <form id="captcha-form" onSubmit={send} className="space-y-4" autoComplete="off">
-          <Notice tone="warning">{challenge.prompt}</Notice>
+          {challenge.in_app ? (
+            <div className="space-y-3">
+              <Notice tone="warning">
+                This CAPTCHA only works on the provider's own page. Open it in a FETCH window, complete the free
+                download steps and the CAPTCHA there yourself, and FETCH takes the download over when the download
+                button appears.
+              </Notice>
+              <Button variant="primary" icon={<AppWindow className="h-4 w-4" />} loading={openWindow.isPending} onClick={openInApp}>
+                Open the CAPTCHA page
+              </Button>
+              {openWindow.isError && <ErrorNote>{errorMessage(openWindow.error)}</ErrorNote>}
+            </div>
+          ) : (
+            <Notice tone="warning">{challenge.prompt}</Notice>
+          )}
           {challenge.kind === "image" && challenge.has_image && download && (
             <>
               <img
@@ -90,13 +113,14 @@ export function CaptchaDialog({ download, onClose }: Props) {
           {challenge.page_url && (
             <p className="text-xs leading-5 text-muted">
               <a href={challenge.page_url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 font-medium text-fg underline">
-                Open the file on the provider's website <ExternalLink className="h-3 w-3" />
+                {challenge.in_app ? "Or open it in your browser instead" : "Open the file on the provider's website"}{" "}
+                <ExternalLink className="h-3 w-3" />
               </a>
             </p>
           )}
           {challenge.accepts_download_url && (
             <Field
-              label={challenge.kind === "image" ? "Or paste the download address (optional)" : "Download address from the provider"}
+              label={challenge.kind === "image" || challenge.in_app ? "Or paste the download address (optional)" : "Download address from the provider"}
               hint="After you finish the provider's free download steps in your browser, copy the address of its final download button and paste it here. It only works from the same network as your browser."
             >
               {(props) => (

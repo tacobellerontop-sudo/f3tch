@@ -477,3 +477,93 @@ def test_migration_upgrades_an_existing_database(tmp_path):
     columns = {c["name"] for c in sa_inspect(engine).get_columns("provider_credentials")}
     assert {"valid", "validation_message", "validated_at"} <= columns
     engine.dispose()
+
+
+# -- the CAPTCHA window of the desktop app ------------------------------------------
+
+
+class PageWindow:
+    """FETCH's window showing the provider's page, as the user moves through it."""
+
+    def __init__(self, url, html=""):
+        self.url, self.html, self.scripts = url, html, []
+        self.destroyed = False
+
+    def get_current_url(self):
+        return self.url
+
+    def evaluate_js(self, script):
+        if script == "document.documentElement.outerHTML":
+            return self.html
+        self.scripts.append(script)
+        return None
+
+    def destroy(self):
+        self.destroyed = True
+
+
+def test_the_app_window_hands_over_the_address_after_the_user_completes_the_captcha(rapidgator, tmp_path):
+    from fetch_app.captcha_window import EXPIRED, CaptchaPage, Handover
+
+    api, emulator = rapidgator
+    data = payload(5000)
+    emulator.files[RG_FILE] = ("archive.rar", data)
+    emulator.captcha_mode = "widget"
+    job_id = api.submit(rg_url())["created"][0]["id"]
+    wait_captcha(api, job_id)
+    ctx = api.client.app.state.ctx
+
+    # Without the desktop app (a browser on the dashboard) there is no such window.
+    assert api.get(f"/downloads/{job_id}/captcha").json()["in_app"] is False
+    assert api.post(f"/downloads/{job_id}/captcha/window").status_code == 409
+
+    opened = []
+    ctx.open_captcha_window = lambda *args: opened.append(args)
+    assert api.get(f"/downloads/{job_id}/captcha").json()["in_app"] is True
+    assert api.post(f"/downloads/{job_id}/captcha/window").status_code == 200
+    assert opened == [(job_id, "rapidgator", f"https://rapidgator.net/file/{RG_FILE}")]
+
+    finished = []
+    page = CaptchaPage(Handover(ctx, job_id, "rapidgator"), on_done=finished.append)
+    window = page.window = PageWindow(f"{emulator.base}/file/{RG_FILE}")
+    # The file's own page and the CAPTCHA step are shown with the guide, never taken.
+    page.on_loaded()
+    window.url, window.html = f"{emulator.base}/download/captcha", (
+        f'<a href="{emulator.base}/download/captcha">again</a><div class="g-recaptcha"></div>')
+    page.on_loaded()
+    assert len(window.scripts) == 2 and "FETCH" in window.scripts[0]
+    assert not page.done.is_set() and emulator.free_transfers == 0
+    # Addresses the page offers are checked like pasted ones.
+    for bad in ("https://example.com/download/x", rg_url(), f"{emulator.base}/download/AjaxGetDownloadLink"):
+        assert page.api.found(bad), bad
+    assert not page.done.is_set()
+
+    # The user completed the CAPTCHA; Rapidgator's next page carries the address.
+    window.html = f"<script>function getUrl() {{ return '{emulator.free_link(RG_FILE)}'; }}</script>"
+    page.on_loaded()
+    assert page.done.is_set()
+    assert api.wait_state(job_id, "completed", "failed")["state"] == "completed"
+    assert (tmp_path / "storage" / "downloads" / str(api.user["id"]) / "archive.rar").read_bytes() == data
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not finished:
+        time.sleep(0.05)
+    assert window.destroyed and finished == [page]
+    assert emulator.captcha_posts == [], "FETCH never answered the CAPTCHA itself"
+
+    # Once the download runs, the window has nothing more to hand over.
+    assert Handover(ctx, job_id, "rapidgator").hand_over(emulator.free_link(RG_FILE)) == EXPIRED
+    assert api.post(f"/downloads/{job_id}/captcha/window").status_code == 404
+
+
+def test_rapidgator_finds_only_the_issued_download_address():
+    adapter = RapidgatorProvider()
+    issued = "https://rapidgator.net/download/free/abc123"
+    assert adapter.find_download_address(f"<a href='{issued}'>Download</a>") == issued
+    assert adapter.find_download_address(
+        "<a href='https://rapidgator.net/download/captcha'>x</a>"
+        f"<script>location.href = '{issued}';</script>") == issued
+    assert adapter.find_download_address("<a href='https://rapidgator.net/download/captcha'>x</a>") is None
+    assert adapter.find_download_address(f"<a href='{rg_url()}'>x</a>") is None
+    assert adapter.find_download_address("<a href='https://example.com/download/x'>x</a>") is None
+    assert adapter.find_download_address(
+        f"The verification code is incorrect. <a href='{issued}'>x</a>") is None

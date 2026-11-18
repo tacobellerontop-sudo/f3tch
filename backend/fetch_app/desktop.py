@@ -219,6 +219,7 @@ class DesktopShell:
         self._quitting = threading.Event()
         self._hint_shown = False
         self._lock = threading.Lock()
+        self._captcha_pages: dict[int, Any] = {}
 
     # -- state file: lets `FETCH.exe status` and the self-test see the window ---------
 
@@ -258,6 +259,13 @@ class DesktopShell:
             if self._quitting.is_set():
                 return
             self._quitting.set()
+        with self._lock:
+            pages, self._captcha_pages = list(self._captcha_pages.values()), {}
+        for page in pages:  # the window library only returns once every window is gone
+            try:
+                page.window.destroy()
+            except Exception:
+                pass
         window = self.window
         if window is not None:
             try:
@@ -266,6 +274,44 @@ class DesktopShell:
                 log.warning("The window could not be closed", exc_info=True)
         else:
             self._stop_tray()
+
+    def open_captcha_window(self, job_id: int, provider: str, url: str) -> None:
+        """Open a provider's page in a window of FETCH's own for its CAPTCHA (see captcha_window)."""
+        from .captcha_window import WINDOW_SIZE, CaptchaPage, Handover
+
+        with self._lock:
+            page = self._captcha_pages.get(job_id)
+            if page is None:
+                page = CaptchaPage(Handover(self.backend.ctx, job_id, provider), on_done=self._captcha_closed)
+                self._captcha_pages[job_id] = page
+                created = True
+            else:
+                created = False
+        if not created:
+            try:
+                page.window.show()
+                page.window.restore()
+            except Exception:
+                log.warning("The CAPTCHA window could not be shown", exc_info=True)
+            return
+        try:
+            page.window = self.webview.create_window(
+                "Complete the CAPTCHA - FETCH", url, js_api=page.api,
+                width=WINDOW_SIZE[0], height=WINDOW_SIZE[1], text_select=True, zoomable=True,
+            )
+            page.window.events.loaded += page.on_loaded
+            page.window.events.closed += lambda: self._captcha_closed(page)
+        except Exception:
+            self._captcha_closed(page)
+            raise
+
+    def _captcha_closed(self, page: Any) -> None:
+        with self._lock:
+            removed = [job_id for job_id, open_page in self._captcha_pages.items() if open_page is page]
+            for job_id in removed:
+                del self._captcha_pages[job_id]
+        if removed and page.done.is_set() and not self._quitting.is_set():
+            self.show()  # back to the downloads, where it now runs
 
     def _on_closing(self) -> bool | None:
         """The window's close button. Returning False keeps the window (hidden)."""
@@ -368,6 +414,7 @@ class DesktopShell:
                 title, url, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1], min_size=WINDOW_MIN_SIZE,
                 background_color=BACKGROUND, text_select=True, zoomable=True,
             )
+            self.backend.ctx.open_captcha_window = self.open_captcha_window
             self.window.events.initialized += on_initialized
             self.window.events.closing += self._on_closing
             self.window.events.loaded += lambda: self._write_state(
@@ -382,6 +429,7 @@ class DesktopShell:
             usable = self._quitting.is_set()
         finally:
             self.window = None
+            self.backend.ctx.open_captcha_window = None
         if not usable:
             self._stop_tray()
         return usable

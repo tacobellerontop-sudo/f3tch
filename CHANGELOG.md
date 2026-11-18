@@ -32,10 +32,19 @@
 - Delete activity: each entry on the Activity page has a delete button, and
   **Clear activity** deletes the whole log (or, with filters set, only the
   matching entries) after asking. Downloads and files are not touched.
+- **Rapidgator CAPTCHA in a FETCH window.** When Rapidgator's free download
+  asks for a CAPTCHA that only works on its own site, **Complete CAPTCHA >
+  Open the CAPTCHA page** opens Rapidgator's page in a window of the FETCH
+  app. You complete the free download steps and the CAPTCHA there yourself;
+  when Rapidgator shows its download button, FETCH takes the download over
+  and closes the window, so nothing has to be copied and pasted. Opening it
+  in your browser and pasting the address still works.
 
 ### Changed
 
 - aria2 now uses 8 connections per file by default (was 4) on new installs.
+- A download waiting for a CAPTCHA now says "Needs you: click here to
+  complete the CAPTCHA".
 
 ## [2.0.0] - 2026-11-17
 

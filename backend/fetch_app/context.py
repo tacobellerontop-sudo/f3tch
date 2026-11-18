@@ -46,6 +46,9 @@ class AppContext:
     local_user_id: int = 0
     # Set by the desktop shell: brings its window to the front.
     show_window: Any = None
+    # Set by the desktop shell: opens a provider's CAPTCHA page in a window of
+    # its own, as ``open_captcha_window(job_id, provider, url)``.
+    open_captcha_window: Any = None
     # Set by the CLI so the local control endpoint can stop the server.
     server: Any = None
     # Settings that changed since start and need a restart to apply.
