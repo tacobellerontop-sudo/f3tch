@@ -201,6 +201,10 @@ is supported and how it was verified. Details, setup steps and limits are in
   actions. Select a row for details, including the exact error of a failed job.
 - **Queue**: what runs next and in which order. Reorder within a priority or
   change the priority.
+- **Schedule**: **Settings > Downloads > Only download at certain times**
+  limits downloading to chosen hours and days (for example 01:00 to 07:00
+  every night). Outside them the queue waits; running downloads go back to
+  the queue and continue where they were when the time comes.
 - **Files**: browse finished downloads, show them in File Explorer, save a
   copy elsewhere, or delete them.
 - **Providers**, **Activity**, **Settings**: capabilities and credentials,

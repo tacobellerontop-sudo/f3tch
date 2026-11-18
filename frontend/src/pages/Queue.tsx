@@ -5,10 +5,10 @@ import { DownloadActions } from "@/components/downloads/actions";
 import { DownloadDetails } from "@/components/downloads/DownloadDetails";
 import { DownloadProgress, ProviderTag, speedText, StateBadge, useLive, WaitNote } from "@/components/downloads/parts";
 import { useAddDownload } from "@/components/layout/AppShell";
-import { Button, Card, EmptyState, ErrorNote, PageHeader, PageLoader, Select, useToast } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorNote, Notice, PageHeader, PageLoader, Select, useToast } from "@/components/ui";
 import { errorMessage } from "@/lib/api";
-import { formatBytes, formatDuration, PRIORITIES, priorityLabel } from "@/lib/format";
-import { useDownloads, useReorder, useSetPriority } from "@/lib/queries";
+import { formatBytes, formatDateTime, formatDuration, PRIORITIES, priorityLabel } from "@/lib/format";
+import { useDownloads, useDownloadStats, useReorder, useSetPriority } from "@/lib/queries";
 import type { Download } from "@/lib/types";
 
 const RUNNING = "inspecting,downloading,verifying";
@@ -103,6 +103,7 @@ export function QueuePage() {
 
   const running = useDownloads({ state: RUNNING, sort: "created_at", order: "asc", page_size: 100 });
   const waiting = useDownloads({ state: WAITING, sort: "queue", order: "asc", page_size: 200 });
+  const stats = useDownloadStats();
   const reorder = useReorder();
   const setPriority = useSetPriority();
   const [openId, setOpenId] = useState<number | null>(null);
@@ -134,6 +135,7 @@ export function QueuePage() {
   const openDownload = all.find((item) => item.id === openId) ?? null;
   const truncated = (waiting.data?.total ?? 0) > waitingItems.length;
   let rank = 0;
+  const schedule = stats.data?.schedule;
 
   return (
     <>
@@ -146,6 +148,13 @@ export function QueuePage() {
           </Button>
         }
       />
+
+      {schedule?.enabled && !schedule.open && (
+        <Notice tone="info" className="mb-4">
+          Downloads are waiting for the schedule
+          {schedule.next_change ? ` and start at ${formatDateTime(schedule.next_change)}` : ""}. Change it under Settings &gt; Downloads.
+        </Notice>
+      )}
 
       {(running.isError || waiting.isError) && (
         <ErrorNote className="mb-4">{errorMessage(running.error ?? waiting.error)}</ErrorNote>

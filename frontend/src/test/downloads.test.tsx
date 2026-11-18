@@ -130,6 +130,18 @@ describe("adding downloads", () => {
   });
 });
 
+describe("schedule", () => {
+  it("tells the user the queue is waiting for the schedule", async () => {
+    renderApp("/queue", local({
+      "GET /downloads/stats": {
+        by_state: {}, active: 0, queued: 1, completed: 0, failed: 0, speed_bps: 0,
+        schedule: { enabled: true, open: false, next_change: "2026-11-19T01:00:00+00:00" },
+      },
+    }));
+    expect(await screen.findByText(/Downloads are waiting for the schedule and start at/)).toBeInTheDocument();
+  });
+});
+
 describe("download controls", () => {
   const rows = [
     makeDownload({ id: 1, filename: "running.iso", state: "downloading" }),

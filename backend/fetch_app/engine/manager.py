@@ -17,7 +17,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -42,6 +42,7 @@ from ..storage import StorageError, StorageManager, sanitize_filename
 from .aria2 import Aria2Service
 from .http import HttpClient
 from .limiter import RateLimiter
+from .schedule import from_settings
 from .transfer import Transfer
 
 log = logging.getLogger("fetch.manager")
@@ -266,6 +267,12 @@ class DownloadManager:
     async def _schedule_locked(self) -> None:
         if self._stopping:
             return
+        window = from_settings(self.settings.get().downloads)
+        if not window.open and self._active:
+            # The schedule closed: running downloads go back to the queue and
+            # continue from where they are when it opens again.
+            for job_id in list(self._active):
+                await self._stop_active(job_id, "requeue")
         picked, next_wait, changed = await self._db(
             lambda s: self._pick(s, len(self._active))
         )
@@ -286,6 +293,9 @@ class DownloadManager:
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
+        if window.next_change is not None:
+            until_change = (window.next_change - datetime.now().astimezone()).total_seconds() + 0.5
+            next_wait = until_change if next_wait is None else min(next_wait, until_change)
         if next_wait is not None:
             self._timer = asyncio.get_running_loop().call_later(max(0.2, next_wait), self._wake.set)
 
@@ -319,6 +329,8 @@ class DownloadManager:
 
         picked: list[Download] = []
         free = settings.downloads.max_global_concurrent - active_total
+        if not from_settings(settings.downloads).open:
+            free = 0  # outside the download schedule: the queue waits
         if free > 0:
             candidates = (
                 session.query(Download)

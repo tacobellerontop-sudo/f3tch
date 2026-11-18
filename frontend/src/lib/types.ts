@@ -102,6 +102,8 @@ export interface DownloadStats {
   completed: number;
   failed: number;
   speed_bps: number;
+  /** Optional on older servers. */
+  schedule?: { enabled: boolean; open: boolean; next_change: string | null };
 }
 
 export interface LinkInfo {
@@ -259,6 +261,10 @@ export interface AppSettings {
     aria2_connections: number;
     connections_per_download: number;
     media_quality: "best" | "2160" | "1440" | "1080" | "720" | "480" | "audio";
+    schedule_enabled: boolean;
+    schedule_start: string;
+    schedule_stop: string;
+    schedule_days: number[];
   };
   storage: {
     storage_root: string;

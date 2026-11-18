@@ -239,6 +239,8 @@ function GeneralTab({ payload }: { payload: SettingsPayload }) {
   );
 }
 
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
 const MEDIA_QUALITIES = [
   { value: "best", label: "Best available" },
   { value: "2160", label: "Up to 4K (2160p)" },
@@ -286,6 +288,50 @@ function DownloadsTab({ payload }: { payload: SettingsPayload }) {
                 )}
               </Field>
             </div>
+          </div>
+          <div className="space-y-4 border-t border-line pt-4">
+            <Switch
+              label="Only download at certain times"
+              description="Outside these hours the queue waits, and running downloads pause and continue from where they were when the time comes. Uses this PC's clock."
+              checked={values.schedule_enabled}
+              onChange={(value) => set("schedule_enabled", value)}
+            />
+            {values.schedule_enabled && (
+              <>
+                <div className={grid}>
+                  <Field label="Start at">
+                    {(props) => <Input {...props} type="time" required value={values.schedule_start} onChange={(event) => set("schedule_start", event.target.value)} />}
+                  </Field>
+                  <Field label="Stop at" hint="Earlier than the start time means overnight. The same time means all day.">
+                    {(props) => <Input {...props} type="time" required value={values.schedule_stop} onChange={(event) => set("schedule_stop", event.target.value)} />}
+                  </Field>
+                </div>
+                <fieldset>
+                  <legend className="mb-2 text-[13px] font-medium text-fg">On these days</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {WEEKDAYS.map((name, day) => {
+                      const on = values.schedule_days.includes(day);
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          aria-pressed={on}
+                          className={cn(
+                            "rounded border px-3 py-1 text-xs",
+                            on ? "border-accent bg-accent text-accent-fg" : "border-line bg-canvas text-muted hover:text-fg",
+                          )}
+                          onClick={() =>
+                            set("schedule_days", on ? values.schedule_days.filter((d) => d !== day) : [...values.schedule_days, day].sort())
+                          }
+                        >
+                          {name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              </>
+            )}
           </div>
           <div className="space-y-4 border-t border-line pt-4">
             <Switch

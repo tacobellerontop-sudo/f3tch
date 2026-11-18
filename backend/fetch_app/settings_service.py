@@ -57,6 +57,20 @@ class DownloadSettings(_Section):
     connections_per_download: int = Field(8, ge=1, le=32)
     # What YouTube and other media sites are saved as.
     media_quality: Literal["best", "2160", "1440", "1080", "720", "480", "audio"] = "best"
+    # Only download during these hours (this PC's local time). Outside them
+    # running downloads go back to the queue and continue when the time comes.
+    schedule_enabled: bool = False
+    schedule_start: str = Field("01:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    schedule_stop: str = Field("07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    # Days the window starts on, Monday = 0.
+    schedule_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6], max_length=7)
+
+    @field_validator("schedule_days")
+    @classmethod
+    def _days(cls, value: list[int]) -> list[int]:
+        if any(day not in range(7) for day in value):
+            raise ValueError("Days are numbered 0 (Monday) to 6 (Sunday).")
+        return sorted(set(value))
 
 
 class StorageSettings(_Section):
