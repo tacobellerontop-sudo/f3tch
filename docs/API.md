@@ -109,6 +109,8 @@ folder that FETCH 1.x (with accounts) could write to, while it holds files.
 | `GET /api/settings` | `{ settings, effective, restart_required }` |
 | `PUT /api/settings` | Body: any subset of sections, for example `{ "downloads": { "retry_count": 5 } }`. Returns the new state plus `changed` |
 | `GET /api/activity` | Query: `page`, `page_size`, `category` (`download`, `file`, `provider`, `admin`), `level`, `q` |
+| `DELETE /api/activity/{id}` | Delete one activity entry. `{ deleted: 1 }`, or `404 not_found` |
+| `DELETE /api/activity` | Delete every activity entry, or only those matching `category`, `level` and `q` (the same filters as the list). Returns `{ deleted }`. Downloads and files are not touched |
 | `GET /api/admin/health` | Health checks, versions, disk, queue and connection counters |
 | `GET /api/admin/logs?limit=&level=&q=` | Tail of the structured log |
 | `GET /api/admin/update?refresh=true\|false` | Installed and latest version, release notes, whether an update can be installed from here (`can_apply`, `apply_blocker`) and the result of the last update run. The GitHub answer is cached for six hours; `refresh=true` asks again |
@@ -133,6 +135,7 @@ Every message is `{ "type": "...", "data": { ... } }`:
 | `queue.changed` | |
 | `storage.changed` | `scope` |
 | `activity` | |
+| `activity.deleted` | `ids` (one entry) or `cleared` (count) |
 | `settings.changed`, `providers.changed` | |
 
 ## Example
