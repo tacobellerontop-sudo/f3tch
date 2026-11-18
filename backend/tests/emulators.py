@@ -414,3 +414,74 @@ class DriveEmulator(Emulator):
             meta["size"] = str(len(file["data"]))
             meta["md5Checksum"] = hashlib.md5(file["data"]).hexdigest()
         return 200, {}, meta
+
+
+# -- MediaFire ---------------------------------------------------------------------
+
+
+class MediaFireEmulator(Emulator):
+    def __init__(self) -> None:
+        super().__init__()
+        self.files: dict[str, tuple[str, bytes]] = {}
+        self.scrambled = False
+        self.password = False
+
+    def handle(self, method, path, query, headers, body):
+        if path == "/api/1.5/file/get_info.php":
+            file = self.files.get(query.get("quick_key", ""))
+            if file is None:
+                return 200, {}, {"response": {"result": "Error", "message": "Unknown or invalid QuickKey"}}
+            name, data = file
+            return 200, {}, {"response": {"result": "Success", "file_info": {
+                "quickkey": query["quick_key"], "filename": name, "size": str(len(data)),
+                "hash": hashlib.sha256(data).hexdigest(),
+                "password_protected": "yes" if self.password else "no",
+            }}}
+        parts = path.strip("/").split("/")
+        if parts[0] == "file" and parts[1] in self.files:
+            # The real page links to downloadNNNN.mediafire.com; the stand-in
+            # serves the file itself, which the test points the adapter at.
+            target = f"https://download1234.mediafire.com/xyz/{parts[1]}/{self.files[parts[1]][0]}"
+            if self.scrambled:
+                encoded = base64.b64encode(target.encode()).decode()
+                button = f'<a class="input popsok" aria-label="Download file" href="javascript:void(0)" id="downloadButton" data-scrambled-url="{encoded}">'
+            else:
+                button = f'<a class="input popsok" aria-label="Download file" href="{target}" id="downloadButton">'
+            return 200, {"Content-Type": "text/html"}, f"<html><body>{button}Download</a></body></html>".encode()
+        if parts[0] == "dl" and parts[1] in self.files:
+            return 200, {"X-Ranges": "1", "Accept-Ranges": "bytes"}, self.files[parts[1]][1]
+        return 404, {}, b""
+
+
+# -- WeTransfer --------------------------------------------------------------------
+
+
+class WeTransferEmulator(Emulator):
+    TRANSFER = "0123456789abcdef0123"
+    HASH = "abcdef12"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.data = b""
+        self.name = "holiday.zip"
+        self.expired = False
+
+    def handle(self, method, path, query, headers, body):
+        if path == "/t-short":
+            return 302, {"Location": f"/downloads/{self.TRANSFER}/{self.HASH}"}, b""
+        if path.startswith("/downloads/"):
+            page = '<html><head><meta name="csrf-token" content="tok123"></head></html>'
+            return 200, {"Content-Type": "text/html"}, page.encode()
+        if path == f"/api/v4/transfers/{self.TRANSFER}/download" and method == "POST":
+            request = json.loads(body or b"{}")
+            if self.expired:
+                return 404, {}, {"message": "Transfer expired"}
+            if request.get("security_hash") != self.HASH or headers.get("X-CSRF-Token") != "tok123":
+                return 403, {}, {"message": "Forbidden"}
+            return 200, {}, {"direct_link": f"{self.base}/file/{self.name}"}
+        if path == f"/file/{self.name}":
+            return 200, {
+                "X-Ranges": "1", "Accept-Ranges": "bytes",
+                "Content-Disposition": f'attachment; filename="{self.name}"',
+            }, self.data
+        return 404, {}, b""

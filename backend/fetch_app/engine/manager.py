@@ -440,6 +440,7 @@ class DownloadManager:
             aria2=self.aria2 if settings.downloads.use_aria2 else None,
             aria2_min_size=settings.downloads.aria2_min_size_mb * 1024 * 1024,
             aria2_connections=settings.downloads.aria2_connections,
+            connections=settings.downloads.connections_per_download,
         )
 
         # --- Downloading -------------------------------------------------------

@@ -173,8 +173,11 @@ class ResolvedDownload:
     checksum: tuple[str, str] | None = None
     #: Stable identity of the content, allowing resume across fresh URLs.
     identity: str | None = None
-    #: Whether the multi-connection aria2 engine may be used.
+    #: Whether the file may be fetched over several connections at once
+    #: (FETCH's segmented engine or aria2).
     allow_aria2: bool = True
+    #: Upper bound on parallel connections the provider tolerates (None: no limit).
+    max_connections: int | None = None
     #: Resume offsets are rounded down to a multiple of this (stream ciphers).
     block_align: int = 1
     #: Optional ``(offset, data) -> data`` applied to every received chunk.
@@ -207,6 +210,9 @@ class ProviderContext:
     #: What the job's owner supplied for a pending challenge, if anything:
     #: ``{"answer": ...}`` or ``{"download_url": ...}``.
     user_input: dict[str, str] | None = None
+    #: ``http://user:password@127.0.0.1:port`` of FETCH's guard proxy, for
+    #: adapters that hand the network to another library (yt-dlp).
+    proxy_url: str | None = None
 
 
 class ProviderAdapter(ABC):

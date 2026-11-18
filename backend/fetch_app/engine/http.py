@@ -36,7 +36,7 @@ class HttpClient:
     async def start(self) -> None:
         if self._session is None:
             connector = aiohttp.TCPConnector(
-                resolver=GuardedResolver(self.guard), limit=64, ttl_dns_cache=60
+                resolver=GuardedResolver(self.guard), limit=256, ttl_dns_cache=60
             )
             self._session = aiohttp.ClientSession(
                 connector=connector,
@@ -44,6 +44,7 @@ class HttpClient:
                 headers={"User-Agent": USER_AGENT},
                 auto_decompress=False,
                 cookie_jar=aiohttp.DummyCookieJar(),
+                read_bufsize=1024 * 1024,
             )
 
     async def close(self) -> None:
