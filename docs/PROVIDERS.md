@@ -72,6 +72,52 @@ Any `http://` or `https://` link that leads straight to a file.
 - Links that require cookies, a login form or a CAPTCHA in a browser fail with
   `auth_required`. FETCH does not accept pasted cookies.
 
+## Dropbox
+
+Public share links (`dropbox.com/s/…`, `dropbox.com/scl/fi/…`). FETCH sets
+`dl=1` on the link, which makes Dropbox send the file itself, then downloads
+it over several connections. Shared folders (`/sh/`, `/scl/fo/`) arrive as
+one .zip made by Dropbox. A link that answers with a web page (deleted,
+password, downloads turned off) is reported as `not_found`.
+
+## MediaFire
+
+Public file links (`mediafire.com/file/<key>/…`). The name, size and SHA-256
+come from MediaFire's public `file/get_info` API; the download address is the
+one behind the download button of the file page (plain or "scrambled"). The
+finished file is checked against the SHA-256. Folders and password-protected
+files are reported, not opened. If MediaFire shows a CAPTCHA, FETCH says so.
+
+## WeTransfer
+
+`wetransfer.com/downloads/…` and `we.tl/…` links. FETCH makes the same request
+as WeTransfer's own download button and downloads the address it gets back.
+Transfers with several files arrive as one .zip. Expired and
+password-protected transfers are reported.
+
+## YouTube and media sites (yt-dlp)
+
+YouTube (including Music and Shorts), Vimeo, Dailymotion, Twitch, SoundCloud,
+Bandcamp, Mixcloud, TikTok, X/Twitter, Reddit, Instagram, Facebook, Bilibili,
+Rumble, Odysee, Streamable, archive.org, TED, Kick and Bluesky are handed to
+[yt-dlp](https://github.com/yt-dlp/yt-dlp). FETCH keeps the queue, progress,
+speed limit and storage; yt-dlp's traffic goes through FETCH's guard proxy.
+
+- **Quality** is set under **Settings > Downloads**: best, a maximum height
+  (2160p to 480p) or audio only (m4a). Above 720p, YouTube serves picture and
+  sound separately; joining them needs **ffmpeg** (`winget install ffmpeg`,
+  or `ffmpeg.exe` next to `FETCH.exe` or in `tools\`). Without ffmpeg FETCH
+  picks the best file that has both.
+- YouTube needs a JavaScript runtime for some formats. FETCH ships Deno for
+  this (the `deno` Python package, bundled into `FETCH.exe`).
+- Age-restricted, members-only or "confirm you're not a bot" videos need
+  cookies: export `cookies.txt` for the site from your browser and paste it
+  under **Providers > YouTube & media sites**. It is encrypted like other
+  credentials.
+- A playlist or channel link downloads the video in the link, if any.
+- **Spotify, Apple Music, Tidal and Deezer are refused**: their audio is
+  DRM-protected and FETCH does not decrypt DRM.
+
 ## Pixeldrain
 
 Links: `https://pixeldrain.com/u/<id>` (also `/api/file/<id>`).

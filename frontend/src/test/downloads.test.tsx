@@ -1,7 +1,8 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { parseUrls } from "@/components/downloads/AddDownloadDialog";
+import { CLIPBOARD_EVENT } from "@/lib/realtime";
 import type { LinkInfo } from "@/lib/types";
 
 import { type Call, HttpFailure, local, makeDownload, page, renderApp } from "./harness";
@@ -14,6 +15,12 @@ function inspected(url: string, overrides: Partial<LinkInfo> = {}): LinkInfo {
 }
 
 describe("parseUrls", () => {
+  it("finds links inside any text", () => {
+    expect(
+      parseUrls('Grab (https://mega.nz/file/AbC#key). <a href="https://x.example/a.zip">a</a> see https://en.wikipedia.org/wiki/Foo_(bar), ok?'),
+    ).toEqual(["https://mega.nz/file/AbC#key", "https://x.example/a.zip", "https://en.wikipedia.org/wiki/Foo_(bar)"]);
+  });
+
   it("splits on whitespace and commas and removes duplicates", () => {
     expect(parseUrls(" https://a.example/1\nhttps://b.example/2, https://a.example/1\n\n")).toEqual([
       "https://a.example/1",
@@ -72,6 +79,42 @@ describe("adding downloads", () => {
     expect(dialog.getByRole("button", { name: "Done" })).toBeInTheDocument();
   });
 
+  it("adds only the links left ticked", async () => {
+    const a = "https://files.example.com/a.zip";
+    const b = "https://files.example.com/b.zip";
+    const { user, server } = renderApp("/downloads", local({
+      "POST /downloads/inspect": (call: Call) => ({ items: (call.body as { urls: string[] }).urls.map((url) => inspected(url)) }),
+      "POST /downloads": { created: [makeDownload({ id: 6, filename: "b.zip", state: "queued" })], rejected: [] },
+    }));
+    const main = within(await screen.findByRole("main"));
+    await user.click((await main.findAllByRole("button", { name: "Add download" }))[0]);
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByLabelText("Links"));
+    await user.paste(`Two files: ${a} and ${b}.`);
+    await user.click(await dialog.findByRole("checkbox", { name: "Add a.zip" }));
+    expect(dialog.getByText(/^1 ready/)).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Add download" }));
+    await waitFor(() => expect(server.find("POST", "/downloads")).toHaveLength(1));
+    expect((server.find("POST", "/downloads")[0].body as { urls: string[] }).urls).toEqual([b]);
+  });
+
+  it("offers links copied to the clipboard and opens the dialog with them", async () => {
+    const link = "https://mega.nz/file/AbC#key";
+    const { user } = renderApp("/downloads", local({
+      "POST /downloads/inspect": (call: Call) => ({ items: (call.body as { urls: string[] }).urls.map((url) => inspected(url, { provider: "mega" })) }),
+    }));
+    await screen.findByRole("main");
+    act(() => {
+      window.dispatchEvent(new CustomEvent(CLIPBOARD_EVENT, { detail: [link] }));
+    });
+    expect(await screen.findByText("You copied a download link")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add it" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Links")).toHaveValue(link);
+    expect(await dialog.findByRole("checkbox", { name: "Add AbC#key" })).toBeChecked();
+    expect(screen.queryByText("You copied a download link")).not.toBeInTheDocument();
+  });
+
   it("cannot be submitted while no link is acceptable", async () => {
     const { user } = renderApp("/downloads", local({
       "POST /downloads/inspect": { items: [inspected("ftp://x/y", { supported: false, message: "Only http and https links are supported." })] },
@@ -82,8 +125,20 @@ describe("adding downloads", () => {
     expect(dialog.getByRole("button", { name: "Add download" })).toBeDisabled();
     await user.click(dialog.getByLabelText("Links"));
     await user.paste("ftp://x/y");
-    expect(await dialog.findByText("Only http and https links are supported.")).toBeInTheDocument();
+    expect(await dialog.findByText("No http:// or https:// links found in this text.")).toBeInTheDocument();
     expect(dialog.getByRole("button", { name: "Add download" })).toBeDisabled();
+  });
+});
+
+describe("schedule", () => {
+  it("tells the user the queue is waiting for the schedule", async () => {
+    renderApp("/queue", local({
+      "GET /downloads/stats": {
+        by_state: {}, active: 0, queued: 1, completed: 0, failed: 0, speed_bps: 0,
+        schedule: { enabled: true, open: false, next_change: "2026-11-19T01:00:00+00:00" },
+      },
+    }));
+    expect(await screen.findByText(/Downloads are waiting for the schedule and start at/)).toBeInTheDocument();
   });
 });
 

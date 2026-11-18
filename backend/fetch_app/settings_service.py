@@ -37,6 +37,8 @@ class GeneralSettings(_Section):
     check_for_updates: bool = True
     # Closing the window keeps FETCH downloading, with an icon in the notification area.
     close_to_tray: bool = True
+    # Offer to add download links copied anywhere on this computer.
+    watch_clipboard: bool = True
 
 
 class DownloadSettings(_Section):
@@ -49,7 +51,29 @@ class DownloadSettings(_Section):
     use_aria2: bool = True
     aria2_path: str = Field("", max_length=500)
     aria2_min_size_mb: int = Field(16, ge=1, le=100_000)
-    aria2_connections: int = Field(4, ge=1, le=16)
+    aria2_connections: int = Field(8, ge=1, le=16)
+    # Parallel connections per file for FETCH's own segmented engine
+    # (1 turns segmented downloading off).
+    connections_per_download: int = Field(8, ge=1, le=32)
+    # What YouTube and other media sites are saved as.
+    media_quality: Literal["best", "2160", "1440", "1080", "720", "480", "audio"] = "best"
+    # Unpack .zip/.7z/.rar/.tar downloads (and multi-part sets) when complete.
+    auto_extract: bool = True
+    delete_after_extract: bool = False
+    # Only download during these hours (this PC's local time). Outside them
+    # running downloads go back to the queue and continue when the time comes.
+    schedule_enabled: bool = False
+    schedule_start: str = Field("01:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    schedule_stop: str = Field("07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    # Days the window starts on, Monday = 0.
+    schedule_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6], max_length=7)
+
+    @field_validator("schedule_days")
+    @classmethod
+    def _days(cls, value: list[int]) -> list[int]:
+        if any(day not in range(7) for day in value):
+            raise ValueError("Days are numbered 0 (Monday) to 6 (Sunday).")
+        return sorted(set(value))
 
 
 class StorageSettings(_Section):

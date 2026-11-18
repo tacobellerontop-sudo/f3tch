@@ -21,7 +21,9 @@ from .base import (
     ProviderError,
 )
 from .direct import DirectHttpProvider
+from .filehosts import DropboxProvider, MediaFireProvider, WeTransferProvider
 from .gdrive import GoogleDriveProvider
+from .media import MediaProvider
 from .mega import MegaProvider
 from .pixeldrain import PixeldrainProvider
 from .rapidgator import RapidgatorProvider
@@ -35,6 +37,10 @@ def builtin_providers() -> list[ProviderAdapter]:
         MegaProvider(),
         PixeldrainProvider(),
         GoogleDriveProvider(),
+        DropboxProvider(),
+        MediaFireProvider(),
+        WeTransferProvider(),
+        MediaProvider(),
         DirectHttpProvider(),
     ]
 
@@ -51,6 +57,8 @@ class ProviderRegistry:
         self._http = http
         self._box = box
         self._providers: dict[str, ProviderAdapter] = {}
+        #: FETCH's guard proxy (set by the application once it exists).
+        self.proxy: Any = None
         for provider in providers if providers is not None else builtin_providers():
             self.register(provider)
 
@@ -213,6 +221,12 @@ class ProviderRegistry:
             status.status = status.effective_mode
         return status
 
+    def proxy_url(self) -> str | None:
+        proxy = self.proxy
+        if proxy is None or not getattr(proxy, "port", 0):
+            return None
+        return f"http://{proxy.username}:{proxy.password}@127.0.0.1:{proxy.port}"
+
     def context(
         self,
         provider: ProviderAdapter,
@@ -236,6 +250,7 @@ class ProviderRegistry:
             auth_mode=mode.value,
             job_id=job_id,
             user_input=user_input,
+            proxy_url=self.proxy_url(),
         )
 
     # -- operations ------------------------------------------------------------
@@ -290,6 +305,7 @@ class ProviderRegistry:
                 http=self._http, credentials=credentials,
                 log=logging.getLogger(f"fetch.provider.{provider_id}"),
                 auth_mode=(AuthMode.ACCOUNT if has_account else AuthMode.ANONYMOUS).value,
+                proxy_url=self.proxy_url(),
             )
             report = await provider.test(ctx)
         except ProviderError as exc:

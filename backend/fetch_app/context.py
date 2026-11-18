@@ -38,6 +38,8 @@ class AppContext:
     aria2: Aria2Service
     manager: DownloadManager
     updates: UpdateService
+    #: Link grabbing from the clipboard (see clipboard.py).
+    clipboard: Any = None
     started_at: float = field(default_factory=time.time)
     control_token: str = ""
     # Id of the built-in local profile, filled in on first use.

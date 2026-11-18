@@ -188,6 +188,24 @@ export function useActivity(params: ActivityParams) {
   });
 }
 
+export function useDeleteActivity() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: number) => api.delete<{ deleted: number }>(`/activity/${id}`),
+    onSettled: () => invalidate("activity"),
+  });
+}
+
+/** Deletes every entry, or only those matching the given filters. */
+export function useClearActivity() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (filters: Pick<ActivityParams, "category" | "level" | "q">) =>
+      api.delete<{ deleted: number }>("/activity", { ...filters }),
+    onSettled: () => invalidate("activity"),
+  });
+}
+
 export function useSettings() {
   return useQuery({ queryKey: ["settings", "values"], queryFn: () => api.get<SettingsPayload>("/settings") });
 }

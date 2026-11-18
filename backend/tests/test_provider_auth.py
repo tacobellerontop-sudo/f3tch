@@ -77,6 +77,10 @@ def test_every_provider_declares_its_authentication_modes():
         "mega": {AuthMode.ANONYMOUS},
         "direct": {AuthMode.ANONYMOUS},
         "gdrive": {AuthMode.ACCOUNT},
+        "dropbox": {AuthMode.ANONYMOUS},
+        "mediafire": {AuthMode.ANONYMOUS},
+        "wetransfer": {AuthMode.ANONYMOUS},
+        "media": {AuthMode.ANONYMOUS, AuthMode.ACCOUNT},
     }
     by_id = {p.id: p for p in builtin_providers()}
     assert by_id["rapidgator"].anonymous_available() and not by_id["rapidgator"].authentication_required()

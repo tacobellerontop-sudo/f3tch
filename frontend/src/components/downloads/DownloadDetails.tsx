@@ -24,6 +24,13 @@ interface Props {
   onClose: () => void;
 }
 
+const ENGINE_LABELS: Record<string, string> = {
+  segmented: "Built-in, multi-connection",
+  native: "Built-in, one connection",
+  aria2: "aria2 (multi-connection)",
+  "yt-dlp": "yt-dlp",
+};
+
 export function DownloadDetails({ download, onClose }: Props) {
   return (
     <Dialog open={download !== null} onClose={onClose} title={download?.filename || "Download"} side>
@@ -79,7 +86,7 @@ function Body({ download }: { download: Download }) {
         <Row label="Average speed">{formatSpeed(live.average)}</Row>
         <Row label="Time remaining">{download.state === "downloading" ? formatDuration(live.eta) : "—"}</Row>
         <Row label="Provider">{providerLabel(download.provider)}</Row>
-        <Row label="Engine">{download.engine === "aria2" ? "aria2 (multi-connection)" : download.engine === "native" ? "Native" : "—"}</Row>
+        <Row label="Engine">{ENGINE_LABELS[download.engine] ?? (download.engine || "—")}</Row>
         <Row label="Priority">{priorityLabel(download.priority)}</Row>
         <Row label="Destination">
           {download.destination === "shared" ? "Shared folder" : "Files"}

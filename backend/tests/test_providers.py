@@ -35,6 +35,13 @@ RG_FILE = "0123456789abcdef0123456789abcdef"
         ("https://drive.google.com/file/d/1AbCdEfGhIjKlMnOp/view?usp=sharing", "gdrive"),
         ("https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMnOp", "gdrive"),
         ("https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit", "gdrive"),
+        ("https://www.dropbox.com/scl/fi/abc123/movie.mkv?rlkey=xyz&dl=0", "dropbox"),
+        ("https://www.mediafire.com/file/abc123def456/movie.mkv/file", "mediafire"),
+        ("https://we.tl/t-AbCdEf123", "wetransfer"),
+        ("https://wetransfer.com/downloads/0123456789abcdef/abcdef", "wetransfer"),
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "media"),
+        ("https://youtu.be/dQw4w9WgXcQ", "media"),
+        ("https://open.spotify.com/track/abc", "media"),
         ("https://example.com/files/a.zip", "direct"),
         ("http://rapidgator.net.evil.example/file/x", "direct"),
         ("https://notmega.nz/file/x", "direct"),
@@ -62,7 +69,10 @@ def test_every_provider_declares_capabilities_and_verification():
 
 def test_provider_list_and_toggle(admin, fileserver):
     listed = {p["id"]: p for p in admin.get("/providers").json()}
-    assert set(listed) == {"rapidgator", "mega", "pixeldrain", "gdrive", "direct"}
+    assert set(listed) == {
+        "rapidgator", "mega", "pixeldrain", "gdrive", "dropbox", "mediafire", "wetransfer",
+        "media", "direct",
+    }
     assert listed["direct"]["ready"] is True
     assert listed["rapidgator"]["ready"] is True, "Rapidgator works without an account"
     assert listed["gdrive"]["ready"] is False

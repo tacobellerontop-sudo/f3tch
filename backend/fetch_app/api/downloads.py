@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query, Request, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session as DbSession
 
+from ..engine.schedule import from_settings
 from ..context import AppContext
 from ..db import utcnow
 from ..models import OPEN_STATES, Download, DownloadState, FileRecord, User
@@ -226,6 +227,7 @@ def stats(user: CurrentUser, ctx: Ctx, db: Db) -> dict:
         "completed": by_state["completed"],
         "failed": by_state["failed"],
         "speed_bps": ctx.manager.aggregate_speed(),
+        "schedule": from_settings(ctx.settings.get().downloads).as_dict(),
     }
 
 

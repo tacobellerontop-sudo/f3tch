@@ -12,6 +12,7 @@ import {
   Pause,
   Search,
   ShieldCheck,
+  Video,
   Zap,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -55,6 +56,10 @@ const PROVIDERS: Record<string, { label: string; icon: ReactNode }> = {
   mega: { label: "MEGA", icon: <Cloud className="h-3 w-3" /> },
   pixeldrain: { label: "Pixeldrain", icon: <Cloud className="h-3 w-3" /> },
   gdrive: { label: "Google Drive", icon: <HardDrive className="h-3 w-3" /> },
+  dropbox: { label: "Dropbox", icon: <Cloud className="h-3 w-3" /> },
+  mediafire: { label: "MediaFire", icon: <Cloud className="h-3 w-3" /> },
+  wetransfer: { label: "WeTransfer", icon: <Cloud className="h-3 w-3" /> },
+  media: { label: "YouTube & media", icon: <Video className="h-3 w-3" /> },
 };
 
 export function providerLabel(id: string): string {

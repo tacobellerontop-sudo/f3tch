@@ -226,12 +226,30 @@ function GeneralTab({ payload }: { payload: SettingsPayload }) {
               checked={values.close_to_tray}
               onChange={(value) => set("close_to_tray", value)}
             />
+            <Switch
+              label="Watch the clipboard for links"
+              description="When you copy download links anywhere on this PC, FETCH offers to add them. The clipboard is read only on this PC and never stored."
+              checked={values.watch_clipboard}
+              onChange={(value) => set("watch_clipboard", value)}
+            />
           </div>
         </>
       )}
     </SettingsForm>
   );
 }
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const MEDIA_QUALITIES = [
+  { value: "best", label: "Best available" },
+  { value: "2160", label: "Up to 4K (2160p)" },
+  { value: "1440", label: "Up to 1440p" },
+  { value: "1080", label: "Up to 1080p" },
+  { value: "720", label: "Up to 720p" },
+  { value: "480", label: "Up to 480p" },
+  { value: "audio", label: "Audio only" },
+] as const;
 
 function DownloadsTab({ payload }: { payload: SettingsPayload }) {
   return (
@@ -256,16 +274,92 @@ function DownloadsTab({ payload }: { payload: SettingsPayload }) {
             </Field>
           </div>
           <div className="space-y-4 border-t border-line pt-4">
+            <div className={grid}>
+              <Num label="Connections per file" hint="FETCH splits files of 2 MB and more into parts fetched at the same time. 1 turns this off." min={1} max={32} value={values.connections_per_download} onChange={(value) => set("connections_per_download", value)} />
+              <Field label="YouTube and media quality" hint="Above 720p and Best need ffmpeg installed (winget install ffmpeg).">
+                {(props) => (
+                  <Select {...props} className="w-full" value={values.media_quality} onChange={(event) => set("media_quality", event.target.value as typeof values.media_quality)}>
+                    {MEDIA_QUALITIES.map((quality) => (
+                      <option key={quality.value} value={quality.value}>
+                        {quality.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            </div>
+          </div>
+          <div className="space-y-4 border-t border-line pt-4">
+            <Switch
+              label="Extract archives automatically"
+              description="Unpacks .zip, .7z, .rar and .tar downloads into a folder next to them once every part of a multi-part set is here. .7z and .rar need 7-Zip (winget install 7zip.7zip). Password-protected archives are left as they are."
+              checked={values.auto_extract}
+              onChange={(value) => set("auto_extract", value)}
+            />
+            {values.auto_extract && (
+              <Switch
+                label="Delete the archive after extracting"
+                description="Removes the .zip, .rar or .7z files (all parts) once their contents were unpacked."
+                checked={values.delete_after_extract}
+                onChange={(value) => set("delete_after_extract", value)}
+              />
+            )}
+          </div>
+          <div className="space-y-4 border-t border-line pt-4">
+            <Switch
+              label="Only download at certain times"
+              description="Outside these hours the queue waits, and running downloads pause and continue from where they were when the time comes. Uses this PC's clock."
+              checked={values.schedule_enabled}
+              onChange={(value) => set("schedule_enabled", value)}
+            />
+            {values.schedule_enabled && (
+              <>
+                <div className={grid}>
+                  <Field label="Start at">
+                    {(props) => <Input {...props} type="time" required value={values.schedule_start} onChange={(event) => set("schedule_start", event.target.value)} />}
+                  </Field>
+                  <Field label="Stop at" hint="Earlier than the start time means overnight. The same time means all day.">
+                    {(props) => <Input {...props} type="time" required value={values.schedule_stop} onChange={(event) => set("schedule_stop", event.target.value)} />}
+                  </Field>
+                </div>
+                <fieldset>
+                  <legend className="mb-2 text-[13px] font-medium text-fg">On these days</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {WEEKDAYS.map((name, day) => {
+                      const on = values.schedule_days.includes(day);
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          aria-pressed={on}
+                          className={cn(
+                            "rounded border px-3 py-1 text-xs",
+                            on ? "border-accent bg-accent text-accent-fg" : "border-line bg-canvas text-muted hover:text-fg",
+                          )}
+                          onClick={() =>
+                            set("schedule_days", on ? values.schedule_days.filter((d) => d !== day) : [...values.schedule_days, day].sort())
+                          }
+                        >
+                          {name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              </>
+            )}
+          </div>
+          <div className="space-y-4 border-t border-line pt-4">
             <Switch
               label="Use aria2 for large files"
-              description="Splits large resumable downloads over several connections. Without it FETCH's built-in engine handles everything. Restart required."
+              description="Optional external engine for large files. FETCH's built-in engine already uses several connections per file. Restart required."
               checked={values.use_aria2}
               onChange={(value) => set("use_aria2", value)}
             />
             <div className={grid}>
               <Text label="aria2 path" hint="Empty: look in tools\aria2 and on PATH. Restart required." value={values.aria2_path} placeholder="C:\Tools\aria2\aria2c.exe" maxLength={500} onChange={(value) => set("aria2_path", value)} />
               <Num label="Use aria2 from (MB)" hint="Smaller files use the built-in engine." min={1} value={values.aria2_min_size_mb} onChange={(value) => set("aria2_min_size_mb", value)} />
-              <Num label="Connections per download" min={1} max={16} value={values.aria2_connections} onChange={(value) => set("aria2_connections", value)} />
+              <Num label="aria2 connections per file" min={1} max={16} value={values.aria2_connections} onChange={(value) => set("aria2_connections", value)} />
             </div>
           </div>
         </>

@@ -3,6 +3,7 @@ import {
   ArrowDownToLine,
   ChevronsLeft,
   ChevronsRight,
+  ClipboardList,
   FolderClosed,
   LayoutDashboard,
   ListOrdered,
@@ -21,12 +22,14 @@ import { useBootstrap } from "@/lib/app";
 import { useUpdateStatus } from "@/lib/queries";
 import { cn } from "@/lib/cn";
 import { formatBytes } from "@/lib/format";
-import { useConnectionStatus, type ConnectionStatus } from "@/lib/realtime";
+import { CLIPBOARD_EVENT, useConnectionStatus, type ConnectionStatus } from "@/lib/realtime";
 
 const COLLAPSE_KEY = "fetch.sidebar.collapsed";
 
 interface AddDownloadOptions {
   folder?: string;
+  /** Links to put in the dialog (from the clipboard, for example). */
+  text?: string;
 }
 
 const AddDownloadContext = createContext<(options?: AddDownloadOptions) => void>(() => undefined);
@@ -202,6 +205,17 @@ export function AppShell({ banner }: { banner?: ReactNode }) {
     setAddOpen(true);
   }, []);
   const closeAdd = useCallback(() => setAddOpen(false), []);
+
+  // Links copied anywhere on this PC (when clipboard watching is on).
+  const [copied, setCopied] = useState<string[]>([]);
+  useEffect(() => {
+    const onLinks = (event: Event) => {
+      const urls = (event as CustomEvent<unknown>).detail;
+      if (Array.isArray(urls) && urls.length) setCopied(urls.filter((url): url is string => typeof url === "string"));
+    };
+    window.addEventListener(CLIPBOARD_EVENT, onLinks);
+    return () => window.removeEventListener(CLIPBOARD_EVENT, onLinks);
+  }, []);
   const contextValue = useMemo(() => openAdd, [openAdd]);
 
   return (
@@ -242,10 +256,44 @@ export function AppShell({ banner }: { banner?: ReactNode }) {
           </main>
         </div>
       </div>
+      {copied.length > 0 && (
+        <div
+          role="status"
+          className="fixed bottom-4 right-4 z-40 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-line bg-surface p-4 shadow-lg"
+        >
+          <div className="flex items-start gap-3">
+            <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-fg">
+                {copied.length === 1 ? "You copied a download link" : `You copied ${copied.length} download links`}
+              </p>
+              <p className="mt-0.5 truncate font-mono text-2xs text-subtle" title={copied.join("\n")}>
+                {copied[0]}
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    openAdd({ text: copied.join("\n") });
+                    setCopied([]);
+                  }}
+                >
+                  {copied.length === 1 ? "Add it" : "Add them"}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setCopied([])}>
+                  Ignore
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <AddDownloadDialog
         open={addOpen}
         onClose={closeAdd}
         initialFolder={addOptions.folder}
+        initialText={addOptions.text}
       />
     </AddDownloadContext.Provider>
   );
