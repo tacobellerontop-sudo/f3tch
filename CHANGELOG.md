@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.0] - 2026-11-18
+
+### Added
+
+- **Rapidgator CAPTCHA in a FETCH window.** When Rapidgator's free download
+  asks for a CAPTCHA that only works on its own site, **Complete CAPTCHA >
+  Open the CAPTCHA page** opens Rapidgator's page in a window of the FETCH
+  app. You complete the free download steps and the CAPTCHA there yourself;
+  when Rapidgator shows its download button, FETCH takes the download over
+  and closes the window, so nothing has to be copied and pasted. Opening it
+  in your browser and pasting the address still works.
+
+### Changed
+
+- A download waiting for a CAPTCHA now says "Needs you: click here to
+  complete the CAPTCHA".
+
 ## [2.0.0] - 2026-11-17
 
 FETCH is now a desktop app for your own PC, without accounts.

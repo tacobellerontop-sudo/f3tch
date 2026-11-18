@@ -90,6 +90,13 @@ export function useSubmitCaptcha() {
   });
 }
 
+/** Opens the provider's page in a window of the FETCH app, where the user completes the CAPTCHA. */
+export function useOpenCaptchaWindow() {
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ ok: boolean }>(`/downloads/${id}/captcha/window`),
+  });
+}
+
 export function useRemoveDownload() {
   const invalidate = useInvalidate();
   return useMutation({

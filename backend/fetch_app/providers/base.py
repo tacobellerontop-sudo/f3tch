@@ -318,6 +318,15 @@ class ProviderAdapter(ABC):
         """
         return "This provider does not accept a download address."
 
+    def find_download_address(self, page: str) -> str | None:
+        """The download address on a provider page the user completed a CAPTCHA on.
+
+        FETCH can show the provider's own page in a window of its own; the
+        person completes the CAPTCHA there, and this picks the address the
+        provider then offers out of the page so it need not be copied by hand.
+        """
+        return None
+
     def release_job(self, job_id: int) -> None:
         """Forget any provider session kept for ``job_id`` (cancelled, removed, failed)."""
 

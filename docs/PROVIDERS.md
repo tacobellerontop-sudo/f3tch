@@ -147,9 +147,15 @@ at the pace Rapidgator sets:
      FETCH submits exactly what you typed. A wrong answer gets a new picture,
      up to three times.
    - A **CAPTCHA widget that only works on rapidgator.net** (reCAPTCHA,
-     hCaptcha and similar) cannot be shown inside FETCH. Open the file on
-     Rapidgator from the dialog, complete the free download steps there, and
-     paste the download address Rapidgator gives you. Rapidgator ties that
+     hCaptcha and similar) cannot be shown in the dialog. In the FETCH app,
+     choose **Open the CAPTCHA page**: Rapidgator's own page opens in a FETCH
+     window. Complete the free download steps and the CAPTCHA there yourself;
+     when Rapidgator shows its download button, FETCH takes the download over
+     and closes the window. FETCH only reads the address Rapidgator offers on
+     that page; it does not fill in or click anything for you. Without the
+     app window (dashboard in a browser), or as a fallback, open the file on
+     Rapidgator in your browser, complete the steps there, and paste the
+     download address Rapidgator gives you. Rapidgator ties that
      address to the network address that requested it, so this works when
      your browser and FETCH share one (FETCH running on the same computer or
      network).

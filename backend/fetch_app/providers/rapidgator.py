@@ -123,6 +123,8 @@ _SECS = re.compile(_VAR.format("secs"))
 _DOWNLOAD_LINK = re.compile(
     r"""(?:return|location\.href\s*=|href=)\s*['"](https?://[^'"\s]+/download/[^'"\s]*)['"]""", re.I
 )
+#: Pages of the free-download steps themselves, which are not the download address.
+_STEP = re.compile(r"/download/(?:captcha|ajax)", re.I)
 _WIDGET = re.compile(
     r"g-recaptcha|recaptcha/api|h-captcha|hcaptcha\.com|cf-turnstile|solvemedia|"
     r"challenges\.cloudflare\.com",
@@ -532,11 +534,21 @@ class RapidgatorProvider(ProviderAdapter):
                 "That is not a Rapidgator download address. Paste the address Rapidgator "
                 "shows after its CAPTCHA."
             )
-        if _FILE.match(url) or "/download/" not in parts.path:
+        if _FILE.match(url) or "/download/" not in parts.path or _STEP.search(parts.path):
             return (
                 "That is the link to the file's page, not the download address. Paste the "
                 "address Rapidgator shows after its CAPTCHA."
             )
+        return None
+
+    def find_download_address(self, page: str) -> str | None:
+        """The download address on a Rapidgator page the user reached after its CAPTCHA."""
+        if _WRONG.search(page):
+            return None
+        for match in _DOWNLOAD_LINK.finditer(page):
+            address = html_lib.unescape(match.group(1))
+            if self.check_download_address(address) is None:
+                return address
         return None
 
     def release_job(self, job_id: int) -> None:

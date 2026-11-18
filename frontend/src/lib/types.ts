@@ -75,6 +75,8 @@ export interface CaptchaChallenge {
   has_image: boolean;
   page_url: string;
   accepts_download_url: boolean;
+  /** The desktop app can open the provider's page in a FETCH window, which takes the address over. */
+  in_app: boolean;
   attempt: number;
   expires_at: string | null;
 }
