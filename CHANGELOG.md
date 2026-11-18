@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Delete activity: each entry on the Activity page has a delete button, and
+  **Clear activity** deletes the whole log (or, with filters set, only the
+  matching entries) after asking. Downloads and files are not touched.
+
 ## [2.0.0] - 2026-11-17
 
 FETCH is now a desktop app for your own PC, without accounts.

@@ -133,3 +133,27 @@ def test_spa_fallback_and_static_assets(tmp_path):
         assert api.client.get("/assets/missing.js").status_code == 404
         assert api.client.get("/api/nope").json()["error"]["code"] == "not_found"
         assert api.client.get("/..%2f..%2fconfig%2ffetch.toml").text == "<html>FETCH</html>"
+
+
+def test_activity_entries_can_be_deleted_one_by_one_or_cleared(admin, fileserver):
+    fileserver.add("b.bin", payload(100))
+    admin.wait_state(admin.submit(fileserver.url("file", "b.bin"))["created"][0]["id"], "completed")
+    before = admin.get("/activity").json()["total"]
+    assert before >= 3
+
+    first = admin.get("/activity").json()["items"][0]
+    assert admin.delete(f"/activity/{first['id']}").json() == {"deleted": 1}
+    assert admin.get("/activity").json()["total"] == before - 1
+    assert admin.delete(f"/activity/{first['id']}").status_code == 404
+
+    downloads = admin.get("/activity", params={"category": "download"}).json()["total"]
+    assert downloads >= 1
+    result = admin.delete("/activity", params={"category": "download"}).json()
+    assert result == {"deleted": downloads}
+    assert admin.get("/activity", params={"category": "download"}).json()["total"] == 0
+    remaining = admin.get("/activity").json()["total"]
+    assert remaining == before - 1 - downloads and remaining > 0, "other categories stay"
+
+    assert admin.delete("/activity").json() == {"deleted": remaining}
+    assert admin.get("/activity").json()["total"] == 0
+    assert admin.get("/downloads").json()["total"] == 1, "downloads are not touched"
