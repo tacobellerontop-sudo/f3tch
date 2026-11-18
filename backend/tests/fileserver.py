@@ -23,6 +23,7 @@ class _Handler(BaseHTTPRequestHandler):
         kind, name = parts[0], "/".join(parts[1:])
         server.hits[f"{method} {kind}"] += 1
         server.requests.append((method, path, dict(self.headers)))
+        server.clients.append((self.client_address[0], self.headers.get("Range", "")))
 
         if kind == "status":
             code = int(name)
@@ -85,6 +86,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Disposition", f'attachment; filename="{server.disposition}"')
         if kind == "html":
             self.send_header("Content-Type", "text/html; charset=utf-8")
+        elif kind == "video":
+            self.send_header("Content-Type", "video/mp4")
         else:
             self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
@@ -125,6 +128,7 @@ class FileServer:
         self.files: dict[str, bytes] = {}
         self.hits: Counter = Counter()
         self.requests: list[tuple[str, str, dict]] = []
+        self.clients: list[tuple[str, str]] = []  # (address the request came from, Range)
         self.flaky_budget: dict[str, int] = {}
         self.slow_delay = 0.02
         self.retry_after = 0

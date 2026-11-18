@@ -11,7 +11,8 @@ const settings: AppSettings = {
   },
   downloads: {
     max_global_concurrent: 3, speed_limit_kbps: 0, retry_count: 3, retry_delay_seconds: 30, default_priority: 1,
-    use_aria2: true, aria2_path: "", aria2_min_size_mb: 16, aria2_connections: 4,
+    use_aria2: true, aria2_path: "", aria2_min_size_mb: 16, aria2_connections: 8,
+    connections_per_download: 8, media_quality: "best",
   },
   storage: { storage_root: "", max_storage_gb: 0, temp_cleanup_hours: 72, auto_delete_days: 0, history_retention_days: 0 },
   network: { port: 0, multi_path: false, adapters: [] },

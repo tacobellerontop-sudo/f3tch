@@ -107,10 +107,17 @@ async def test_paths_spread_segments_over_online_adapters() -> None:
     paths = NetworkPaths(UrlGuard([]), EventBus(), _settings(True), discover=_discover, prober=_prober)
     await paths.refresh()
     assert [a.id for a in paths.active()] == ["Wi-Fi", "Wi-Fi 2"]
-    choose = paths.client_for()
+    fallback = object()
+    choose = paths.client_for(fallback)
     assert choose is not None
     picks = [choose(i).local_address for i in range(5)]
     assert picks == ["127.0.0.1", "127.0.0.2", "127.0.0.1", "127.0.0.2", "127.0.0.1"]
+    # Wi-Fi 2 drops: its connections move to Wi-Fi, then to the usual route.
+    paths._adapters["Wi-Fi 2"].online = False
+    assert {choose(i).local_address for i in range(4)} == {"127.0.0.1"}
+    paths._adapters["Wi-Fi"].online = False
+    assert choose(0) is fallback
+    paths._adapters["Wi-Fi"].online = paths._adapters["Wi-Fi 2"].online = True
     snap = paths.snapshot()
     assert snap["multi_path_active"] is True
     by_id = {a["id"]: a for a in snap["adapters"]}
@@ -122,7 +129,7 @@ async def test_paths_spread_segments_over_online_adapters() -> None:
 async def test_paths_need_two_usable_adapters_and_respect_the_choice() -> None:
     off = NetworkPaths(UrlGuard([]), EventBus(), _settings(False), discover=_discover, prober=_prober)
     await off.refresh()
-    assert off.client_for() is None
+    assert off.client_for(None) is None
 
     one = NetworkPaths(
         UrlGuard([]), EventBus(), _settings(True, ["Wi-Fi", "Ethernet"]),
@@ -130,7 +137,7 @@ async def test_paths_need_two_usable_adapters_and_respect_the_choice() -> None:
     )
     await one.refresh()
     assert one.active() == []  # Ethernet is offline, so only one path is left
-    assert one.client_for() is None
+    assert one.client_for(None) is None
 
 
 async def test_sample_reports_per_adapter_speeds() -> None:
@@ -154,3 +161,35 @@ def test_network_api_and_setting(tmp_path) -> None:
         assert changed.status_code == 200, changed.text
         assert changed.json()["settings"]["network"]["multi_path"] is True
         assert app.state.ctx.netpaths.enabled is True
+
+
+def test_download_is_split_over_two_adapters(app, admin, fileserver, boot) -> None:
+    import os
+
+    paths = app.state.ctx.netpaths
+    paths._discover = lambda: [
+        Adapter(id="Wi-Fi", name="Wi-Fi", address="127.0.0.1", kind="wifi"),
+        Adapter(id="Wi-Fi 2", name="Wi-Fi 2", address="127.0.0.2", kind="wifi"),
+    ]
+
+    async def online(_address):
+        return 5.0
+
+    paths._probe = online
+    admin.put("/settings", json={"network": {"multi_path": True}, "downloads": {"use_aria2": True}})
+    network = admin.post("/network/refresh").json()
+    assert network["multi_path_active"] is True
+
+    data = fileserver.add("two.bin", os.urandom(8 * 1024 * 1024))
+    job_id = admin.submit(fileserver.url("file", "two.bin"))["created"][0]["id"]
+    done = admin.wait_state(job_id, "completed", timeout=60)
+    assert done["engine"] == "segmented"
+    stored = boot.storage_root / "downloads" / str(admin.user["id"]) / "two.bin"
+    assert stored.read_bytes() == data
+    sources = {address for address, rng in fileserver.clients if rng}
+    assert sources == {"127.0.0.1", "127.0.0.2"}, fileserver.clients
+
+    snap = admin.get("/network").json()
+    by_id = {a["id"]: a for a in snap["adapters"]}
+    assert by_id["Wi-Fi"]["total_bytes"] > 0 and by_id["Wi-Fi 2"]["total_bytes"] > 0
+    assert by_id["Wi-Fi"]["total_bytes"] + by_id["Wi-Fi 2"]["total_bytes"] >= len(data)

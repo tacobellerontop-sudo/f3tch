@@ -6,4 +6,5 @@ pydantic>=2.7,<3.0
 argon2-cffi>=23.1
 cryptography>=42.0
 aiohttp>=3.9.5
+yt-dlp[default,deno]>=2026.10.26  # YouTube and media sites (with the Deno runtime it needs)
 psutil>=5.9

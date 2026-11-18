@@ -95,11 +95,12 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
     guard = UrlGuard(boot.ssrf_allowlist)
     http = HttpClient(guard)
     netpaths = NetworkPaths(guard, bus, settings.get)
-    http.trace_configs.append(netpaths.default_trace)
+    http.on_bytes = netpaths.default_meter.add
     box = SecretBox(boot.secret_key)
     registry = ProviderRegistry(db, http, box, providers)
     registry.sync()
     proxy = GuardProxy(guard)
+    registry.proxy = proxy
     downloads_settings = settings.get().downloads
     executable = find_aria2(downloads_settings.aria2_path, boot.home) if downloads_settings.use_aria2 else None
     aria2 = Aria2Service(executable, boot.data_dir, proxy)
@@ -107,7 +108,7 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
         aria2.error = ""
     manager = DownloadManager(
         db=db, settings=settings, storage=storage, registry=registry, http=http,
-        bus=bus, activity=activity, aria2=aria2,
+        bus=bus, activity=activity, aria2=aria2, netpaths=netpaths,
     )
     return AppContext(
         boot=boot, db=db, settings=settings, bus=bus, activity=activity, storage=storage,

@@ -209,6 +209,8 @@ def main() -> int:
                 assert "-> 403" in str(error), error
             else:
                 raise AssertionError("a request from another site or host name was answered")
+        media = browser.call("POST", "/api/providers/media/test")
+        assert "yt-dlp" in media["message"] and "Deno was not found" not in media["message"], media
 
         print("3. Checking for updates")
         update = browser.call("GET", "/api/admin/update?refresh=true")

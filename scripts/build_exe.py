@@ -59,6 +59,18 @@ def main() -> int:
                 desktop += ["--collect-all", "clr_loader", "--collect-all", "pythonnet"]
         if has("pystray"):
             desktop += ["--collect-submodules", "pystray"]
+        media: list[str] = []
+        if has("yt_dlp"):
+            # YouTube and media sites. yt-dlp loads extractors and the EJS
+            # challenge scripts at run time.
+            media += ["--collect-submodules", "yt_dlp"]
+            if has("yt_dlp_ejs"):
+                media += ["--collect-all", "yt_dlp_ejs"]
+            if has("deno"):
+                # The Deno executable is installed as a script, not package data.
+                from deno import find_deno_bin
+
+                media += ["--add-binary", f"{find_deno_bin()}{os.pathsep}deno_bin"]
         if os.name == "nt" and not desktop:
             raise SystemExit("pywebview and pystray are missing. Run `pip install -r backend/requirements-build.txt`.")
         command = [
@@ -79,6 +91,7 @@ def main() -> int:
             "--hidden-import", "sqlalchemy.dialects.sqlite",
             "--hidden-import", "logging.config",
             *desktop,
+            *media,
             "--exclude-module", "tkinter",
             "--exclude-module", "pytest",
             str(BACKEND / "fetch_exe.py"),

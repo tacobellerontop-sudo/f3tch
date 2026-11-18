@@ -49,7 +49,12 @@ class DownloadSettings(_Section):
     use_aria2: bool = True
     aria2_path: str = Field("", max_length=500)
     aria2_min_size_mb: int = Field(16, ge=1, le=100_000)
-    aria2_connections: int = Field(4, ge=1, le=16)
+    aria2_connections: int = Field(8, ge=1, le=16)
+    # Parallel connections per file for FETCH's own segmented engine
+    # (1 turns segmented downloading off).
+    connections_per_download: int = Field(8, ge=1, le=32)
+    # What YouTube and other media sites are saved as.
+    media_quality: Literal["best", "2160", "1440", "1080", "720", "480", "audio"] = "best"
 
 
 class StorageSettings(_Section):

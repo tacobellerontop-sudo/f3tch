@@ -21,6 +21,7 @@ from ..providers.base import ErrorCode, ProviderError, ResolvedDownload
 from .aria2 import Aria2Error, Aria2Service
 from .http import HttpClient
 from .limiter import RateLimiter
+from .segmented import MIN_SEGMENTED_SIZE, RangeNotHonoured, SegmentedDownload
 
 log = logging.getLogger("fetch.transfer")
 
@@ -82,6 +83,7 @@ class Transfer:
         aria2: Aria2Service | None = None,
         aria2_min_size: int = 16 * 1024 * 1024,
         aria2_connections: int = 4,
+        connections: int = 1,
     ) -> None:
         self.job_id = job_id
         self.destination = destination
@@ -92,6 +94,9 @@ class Transfer:
         self._aria2 = aria2
         self._aria2_min_size = aria2_min_size
         self._aria2_connections = aria2_connections
+        self._connections = max(1, connections)
+        #: Optional ``segment index -> HttpClient`` for the segmented engine.
+        self.client_for: Callable[[int], HttpClient] | None = None
         self.engine = ""
 
     # -- helpers ---------------------------------------------------------------
@@ -104,6 +109,10 @@ class Transfer:
     def aria2_control(self) -> Path:
         return self.destination.with_name(self.destination.name + ".aria2")
 
+    @property
+    def segments_path(self) -> Path:
+        return self.destination.with_name(self.destination.name + ".segments")
+
     def report(self, downloaded: int, total: int | None) -> None:
         self._check_size(max(downloaded, total or 0))
         self._on_progress(downloaded, total)
@@ -115,23 +124,34 @@ class Transfer:
             return {}
 
     def discard_partial(self) -> None:
-        for path in (self.destination, self.meta_path, self.aria2_control):
+        for path in (self.destination, self.meta_path, self.aria2_control, self.segments_path):
             with contextlib.suppress(OSError):
                 path.unlink()
 
     # -- entry point -----------------------------------------------------------
 
+    def _connections_for(self, resolved: ResolvedDownload) -> int:
+        limit = self._connections
+        if resolved.max_connections:
+            limit = min(limit, resolved.max_connections)
+        return limit
+
     async def fetch(self, resolved: ResolvedDownload) -> None:
         has_partial = self.destination.exists() and self.destination.stat().st_size > 0
         has_control = self.aria2_control.exists()
-        aria2_ok = (
-            self._aria2 is not None
-            and self._aria2.available
-            and resolved.allow_aria2
+        has_segments = self.segments_path.exists()
+        multi = (
+            resolved.allow_aria2
             and resolved.transform is None
             and resolved.resumable
             and resolved.size is not None
+        )
+        aria2_ok = (
+            multi
+            and self._aria2 is not None
+            and self._aria2.available
             and resolved.size >= self._aria2_min_size
+            and not has_segments
             and (has_control or not has_partial)
         )
         if aria2_ok:
@@ -146,8 +166,32 @@ class Transfer:
                     extra={"job_id": self.job_id, "reason": str(exc)},
                 )
                 self.discard_partial()
+                has_partial = has_segments = False
         elif has_control:
-            # A segmented aria2 partial cannot be continued sequentially.
+            # A segmented aria2 partial cannot be continued by another engine.
+            self.discard_partial()
+            has_partial = has_segments = False
+
+        connections = self._connections_for(resolved)
+        segmented_ok = (
+            multi
+            and connections > 1
+            and resolved.size >= MIN_SEGMENTED_SIZE
+            and (has_segments or not has_partial)
+        )
+        if segmented_ok:
+            self.engine = "segmented"
+            try:
+                await SegmentedDownload(self, resolved, connections, self.client_for).run()
+                return
+            except RangeNotHonoured:
+                log.info(
+                    "The server did not honour ranges; using one connection",
+                    extra={"job_id": self.job_id},
+                )
+                self.discard_partial()
+        elif has_segments:
+            # Ranges of an earlier segmented attempt cannot be continued sequentially.
             self.discard_partial()
         await self._fetch_native(resolved)
 

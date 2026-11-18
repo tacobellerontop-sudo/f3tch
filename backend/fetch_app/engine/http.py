@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -26,14 +26,62 @@ def _origin(url: str) -> tuple[str, str, int | None]:
     return parts.scheme.lower(), (parts.hostname or "").lower(), parts.port
 
 
+class MeteredStream:
+    """A response body that reports how many bytes were read from it."""
+
+    def __init__(self, inner: aiohttp.StreamReader, on_bytes: Callable[[int], None]) -> None:
+        self._inner = inner
+        self._on_bytes = on_bytes
+
+    def _count(self, data: bytes) -> bytes:
+        if data:
+            self._on_bytes(len(data))
+        return data
+
+    async def read(self, n: int = -1) -> bytes:
+        return self._count(await self._inner.read(n))
+
+    async def readany(self) -> bytes:
+        return self._count(await self._inner.readany())
+
+    async def readexactly(self, n: int) -> bytes:
+        return self._count(await self._inner.readexactly(n))
+
+    async def readline(self) -> bytes:
+        return self._count(await self._inner.readline())
+
+    async def readchunk(self) -> tuple[bytes, bool]:
+        data, end = await self._inner.readchunk()
+        return self._count(data), end
+
+    async def iter_chunked(self, n: int) -> AsyncIterator[bytes]:
+        async for chunk in self._inner.iter_chunked(n):
+            yield self._count(chunk)
+
+    async def iter_any(self) -> AsyncIterator[bytes]:
+        async for chunk in self._inner.iter_any():
+            yield self._count(chunk)
+
+    def __aiter__(self) -> AsyncIterator[bytes]:
+        return self._lines()
+
+    async def _lines(self) -> AsyncIterator[bytes]:
+        async for line in self._inner:
+            yield self._count(line)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 class HttpClient:
     """aiohttp wrapper that validates every hop against the SSRF guard."""
 
     def __init__(self, guard: UrlGuard) -> None:
         self.guard = guard
         self._session: aiohttp.ClientSession | None = None
-        # aiohttp trace hooks, e.g. the byte meter of the network speed view.
-        self.trace_configs: list[aiohttp.TraceConfig] = []
+        # Called with the size of every chunk of a response body this client
+        # receives: the byte meter of the network speed view.
+        self.on_bytes: Callable[[int], None] | None = None
 
     async def start(self) -> None:
         if self._session is None:
@@ -42,7 +90,7 @@ class HttpClient:
 
     def _connector_options(self) -> dict[str, Any]:
         """Keyword arguments of the TCP connector (subclasses bind it to an adapter)."""
-        return {"resolver": GuardedResolver(self.guard), "limit": 64, "ttl_dns_cache": 60}
+        return {"resolver": GuardedResolver(self.guard), "limit": 256, "ttl_dns_cache": 60}
 
     def _session_options(self) -> dict[str, Any]:
         options: dict[str, Any] = {
@@ -50,9 +98,8 @@ class HttpClient:
             "headers": {"User-Agent": USER_AGENT},
             "auto_decompress": False,
             "cookie_jar": aiohttp.DummyCookieJar(),
+            "read_bufsize": 1024 * 1024,
         }
-        if self.trace_configs:
-            options["trace_configs"] = list(self.trace_configs)
         return options
 
     async def close(self) -> None:
@@ -119,6 +166,8 @@ class HttpClient:
                     kwargs.pop("json", None)
                 current = target
                 continue
+            if self.on_bytes is not None:
+                response.content = MeteredStream(response.content, self.on_bytes)
             try:
                 yield response
             finally:

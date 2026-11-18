@@ -234,6 +234,16 @@ function GeneralTab({ payload }: { payload: SettingsPayload }) {
   );
 }
 
+const MEDIA_QUALITIES = [
+  { value: "best", label: "Best available" },
+  { value: "2160", label: "Up to 4K (2160p)" },
+  { value: "1440", label: "Up to 1440p" },
+  { value: "1080", label: "Up to 1080p" },
+  { value: "720", label: "Up to 720p" },
+  { value: "480", label: "Up to 480p" },
+  { value: "audio", label: "Audio only" },
+] as const;
+
 function DownloadsTab({ payload }: { payload: SettingsPayload }) {
   return (
     <SettingsForm section="downloads" payload={payload} title="Downloads" description="Queue limits, retries and the transfer engine.">
@@ -257,16 +267,32 @@ function DownloadsTab({ payload }: { payload: SettingsPayload }) {
             </Field>
           </div>
           <div className="space-y-4 border-t border-line pt-4">
+            <div className={grid}>
+              <Num label="Connections per file" hint="FETCH splits files of 2 MB and more into parts fetched at the same time. 1 turns this off." min={1} max={32} value={values.connections_per_download} onChange={(value) => set("connections_per_download", value)} />
+              <Field label="YouTube and media quality" hint="Above 720p and Best need ffmpeg installed (winget install ffmpeg).">
+                {(props) => (
+                  <Select {...props} className="w-full" value={values.media_quality} onChange={(event) => set("media_quality", event.target.value as typeof values.media_quality)}>
+                    {MEDIA_QUALITIES.map((quality) => (
+                      <option key={quality.value} value={quality.value}>
+                        {quality.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            </div>
+          </div>
+          <div className="space-y-4 border-t border-line pt-4">
             <Switch
               label="Use aria2 for large files"
-              description="Splits large resumable downloads over several connections. Without it FETCH's built-in engine handles everything. Restart required."
+              description="Optional external engine for large files. FETCH's built-in engine already uses several connections per file. Restart required."
               checked={values.use_aria2}
               onChange={(value) => set("use_aria2", value)}
             />
             <div className={grid}>
               <Text label="aria2 path" hint="Empty: look in tools\aria2 and on PATH. Restart required." value={values.aria2_path} placeholder="C:\Tools\aria2\aria2c.exe" maxLength={500} onChange={(value) => set("aria2_path", value)} />
               <Num label="Use aria2 from (MB)" hint="Smaller files use the built-in engine." min={1} value={values.aria2_min_size_mb} onChange={(value) => set("aria2_min_size_mb", value)} />
-              <Num label="Connections per download" min={1} max={16} value={values.aria2_connections} onChange={(value) => set("aria2_connections", value)} />
+              <Num label="aria2 connections per file" min={1} max={16} value={values.aria2_connections} onChange={(value) => set("aria2_connections", value)} />
             </div>
           </div>
         </>

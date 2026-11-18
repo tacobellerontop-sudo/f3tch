@@ -158,6 +158,41 @@ password. `.\uninstall.ps1` removes it, or delete it in Task Scheduler.
 | MEGA | Yes | Nothing | Public file links with their key; decrypted and verified locally |
 | Google Drive | No | Your own API key or service account | Publicly shared or explicitly shared files |
 | Rapidgator | Yes | Nothing for free downloads (you wait and complete Rapidgator's CAPTCHA yourself). Optionally your own Premium account | Free download flow, or the official API with an account |
+| Dropbox | Yes | Nothing | Public share links; shared folders arrive as one .zip |
+| MediaFire | Yes | Nothing | Public file links; SHA-256 checked |
+| WeTransfer | Yes | Nothing | wetransfer.com/downloads and we.tl links; several files arrive as one .zip |
+| YouTube & media sites | Yes | Nothing (ffmpeg for above 720p) | YouTube, Vimeo, SoundCloud, TikTok, Twitch, X, Reddit and more, through yt-dlp. Quality under Settings > Downloads |
+
+Spotify (and Apple Music, Tidal, Deezer) is not supported: its music is
+protected by DRM, and FETCH does not remove DRM. A Spotify link is answered
+with that explanation.
+
+### Speed
+
+FETCH splits every file of 2 MB or more into parts and downloads them over
+several connections at once (8 by default, up to 32 under **Settings >
+Downloads > Connections per file**). When one connection finishes early it
+takes over half of the slowest part, so one slow connection never holds the
+download back. Each part's progress is saved, so pause, a crash or a lost
+connection continues where every part stopped. This needs no extra program;
+aria2 remains an option. Servers that do not support ranges, and providers
+that allow one connection only (MEGA, free Rapidgator), use one connection.
+YouTube and other media downloads fetch their fragments in parallel too.
+
+### Two networks at once
+
+If your PC has more than one way online, such as two Wi-Fi adapters (for
+example a USB Wi-Fi stick on a second network or a phone hotspot), or Wi-Fi
+plus Ethernet or a tethered phone, FETCH can download over all of them at
+once. Turn on **Use every connection at once** on the Overview, or under
+**Settings > Network**, where you can also pick which connections to use.
+FETCH checks which adapters really reach the internet, binds each part's
+connection to one adapter, and lets the faster adapter take more of the
+file. If one connection drops, its parts move to the others. The **Network
+speed** panel on the Overview draws the speed of every connection live.
+Each adapter needs its own route to the internet: two adapters on the same
+router share that router's speed. Large files then use FETCH's own engine
+instead of aria2, because aria2 cannot pick an adapter per connection.
 
 Credentials are entered under **Providers**, encrypted at rest, and never
 shown again. Each provider card states exactly what
@@ -314,6 +349,11 @@ There are no accounts: anyone who can use your Windows account can use FETCH.
 
 - The interface is in English only. The language setting exists so more can
   be added, but no other translation is included.
+- Dropbox, MediaFire, WeTransfer and the YouTube/media provider have only
+  been tested against local stand-ins, not the live sites. yt-dlp itself is
+  maintained against those sites, but a site change can break a download
+  until yt-dlp is updated with FETCH. Without ffmpeg, YouTube is limited to
+  720p; playlists and channels are not expanded into separate downloads.
 - Rapidgator, MEGA, Pixeldrain and Google Drive were implemented from the
   providers' published interfaces and are tested against local emulations of
   them. They have **not** been run against the live services by the automated
@@ -342,6 +382,12 @@ There are no accounts: anyone who can use your Windows account can use FETCH.
   by the automated checks (install, start, update, stop, uninstall). The
   winget prompts and the sign-in startup task have not been exercised.
 - Changing the storage location does not move existing files for you.
+- Downloading over two networks at once relies on Windows sending each
+  connection out of the adapter that owns its address. The automated tests
+  prove that each part leaves from its own local address, but it has not
+  been tried on a real PC with two Wi-Fi adapters yet. Virtual adapters (VPN,
+  Hyper-V, VirtualBox, WSL) are left out; a VPN that routes everything may
+  make both adapters use the same route.
 
 ## More documentation
 

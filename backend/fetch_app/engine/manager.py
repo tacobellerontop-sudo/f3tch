@@ -41,6 +41,7 @@ from ..settings_service import GB, SettingsService
 from ..storage import StorageError, StorageManager, sanitize_filename
 from .aria2 import Aria2Service
 from .http import HttpClient
+from .netpaths import NetworkPaths
 from .limiter import RateLimiter
 from .transfer import Transfer
 
@@ -110,6 +111,7 @@ class DownloadManager:
         bus: EventBus,
         activity: ActivityService,
         aria2: Aria2Service | None = None,
+        netpaths: NetworkPaths | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -119,6 +121,7 @@ class DownloadManager:
         self.bus = bus
         self.activity = activity
         self.aria2 = aria2
+        self.netpaths = netpaths
         self._active: dict[int, JobHandle] = {}
         self._limiter = RateLimiter()
         # CAPTCHA challenges waiting for their download's owner, and what the
@@ -430,6 +433,13 @@ class DownloadManager:
 
         temp_dir = await asyncio.to_thread(self.storage.job_temp_dir, job_id)
         payload = temp_dir / PAYLOAD_NAME
+        # Several network connections: spread the ranges over all of them.
+        # aria2 cannot pick an adapter per connection, so the native segmented
+        # engine takes these downloads, with at least two connections per adapter.
+        chooser = self.netpaths.client_for(self.http) if self.netpaths is not None else None
+        connections = settings.downloads.connections_per_download
+        if chooser is not None:
+            connections = max(connections, 2 * len(self.netpaths.active()))
         transfer = Transfer(
             job_id=job_id,
             destination=payload,
@@ -437,10 +447,12 @@ class DownloadManager:
             limiter=limiter,
             on_progress=lambda done, total: self._on_progress(handle, done, total),
             check_size=check_size,
-            aria2=self.aria2 if settings.downloads.use_aria2 else None,
+            aria2=self.aria2 if settings.downloads.use_aria2 and chooser is None else None,
             aria2_min_size=settings.downloads.aria2_min_size_mb * 1024 * 1024,
             aria2_connections=settings.downloads.aria2_connections,
+            connections=connections,
         )
+        transfer.client_for = chooser
 
         # --- Downloading -------------------------------------------------------
         def to_downloading(session: Session) -> Download:

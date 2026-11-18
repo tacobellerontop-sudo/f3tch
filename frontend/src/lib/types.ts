@@ -256,6 +256,8 @@ export interface AppSettings {
     aria2_path: string;
     aria2_min_size_mb: number;
     aria2_connections: number;
+    connections_per_download: number;
+    media_quality: "best" | "2160" | "1440" | "1080" | "720" | "480" | "audio";
   };
   storage: {
     storage_root: string;

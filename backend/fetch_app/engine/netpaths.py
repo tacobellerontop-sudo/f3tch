@@ -7,7 +7,7 @@ local IPv4 address. Windows sends a packet out of the adapter that owns its
 source address (the strong host model), so binding is enough to pick the route
 as long as each adapter has its own gateway.
 
-Each client counts the bytes it receives (an aiohttp trace hook), and a
+Each client counts the bytes it receives, and a
 sampler turns those counters into per-adapter speeds once a second. The
 dashboard draws them live from the ``network.speeds`` event.
 """
@@ -22,12 +22,14 @@ import re
 import socket
 import time
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import aiohttp
 
+from ..providers.base import ErrorCode, ProviderError
 from .http import HttpClient
 
 log = logging.getLogger("fetch.netpaths")
@@ -166,25 +168,35 @@ class Meter:
         return self.bps
 
 
-def meter_trace(meter: Meter) -> aiohttp.TraceConfig:
-    """An aiohttp trace hook that adds every received chunk to ``meter``."""
-    trace = aiohttp.TraceConfig()
-
-    async def on_chunk(_session, _ctx, params) -> None:
-        meter.add(len(params.chunk))
-
-    trace.on_response_chunk_received.append(on_chunk)
-    return trace
-
-
 class BoundHttpClient(HttpClient):
     """An :class:`HttpClient` whose connections leave from one local address."""
 
-    def __init__(self, guard, local_address: str | None, meter: Meter) -> None:
+    def __init__(
+        self,
+        guard,
+        local_address: str | None,
+        meter: Meter,
+        on_failure: Callable[["BoundHttpClient"], None] | None = None,
+    ) -> None:
         super().__init__(guard)
         self.local_address = local_address
         self.meter = meter
-        self.trace_configs.append(meter_trace(meter))
+        self.on_failure = on_failure
+        self.on_bytes = meter.add
+
+    @asynccontextmanager
+    async def request(self, method: str, url: str, **kwargs: Any) -> AsyncIterator[aiohttp.ClientResponse]:
+        try:
+            async with super().request(method, url, **kwargs) as response:
+                yield response
+        except ProviderError as exc:
+            if exc.code == ErrorCode.NETWORK and self.on_failure is not None:
+                self.on_failure(self)
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError):
+            if self.on_failure is not None:
+                self.on_failure(self)
+            raise
 
     def _connector_options(self) -> dict[str, Any]:
         options = super()._connector_options()
@@ -217,7 +229,8 @@ class NetworkPaths:
         self._adapters: dict[str, Adapter] = {}
         self._clients: dict[str, BoundHttpClient] = {}
         self.meters: dict[str, Meter] = {DEFAULT_PATH: Meter()}
-        self.default_trace = meter_trace(self.meters[DEFAULT_PATH])
+        #: Byte counter of the usual route (the shared client of FETCH).
+        self.default_meter = self.meters[DEFAULT_PATH]
         self._lock = asyncio.Lock()
         self._sampler: asyncio.Task | None = None
         self._refresher: asyncio.Task | None = None
@@ -302,32 +315,53 @@ class NetworkPaths:
         client = self._clients.get(adapter_id)
         if client is None:
             adapter = self._adapters[adapter_id]
-            client = BoundHttpClient(self._guard, adapter.address, self.meters[adapter_id])
+            client = BoundHttpClient(
+                self._guard, adapter.address, self.meters[adapter_id], on_failure=self.mark_failed
+            )
             self._clients[adapter_id] = client
         return client
 
-    def client_for(self) -> Callable[[int], HttpClient] | None:
-        """A segment-index -> client chooser for one download, or None for one path.
+    def client_for(self, fallback: HttpClient) -> Callable[[int], HttpClient] | None:
+        """A connection-index -> client chooser for one download, or None for one path.
 
-        Segments are handed out round-robin; since every segment worker pulls
-        the next range when it finishes (work stealing), the faster adapter
-        ends up carrying more of the file.
+        Connection ``i`` keeps adapter ``i % n``. Every connection takes over
+        part of the largest range left when it finishes its own, so the faster
+        adapter ends up carrying more of the file. When an adapter stops
+        working, its connections move to the adapters that still do (or to
+        ``fallback``, the usual route).
         """
         adapters = self.active()
         if not adapters:
             return None
-        clients = [self.client(a.id) for a in adapters]
+        ids = [a.id for a in adapters]
 
         def choose(index: int) -> HttpClient:
-            return clients[index % len(clients)]
+            wanted = ids[index % len(ids)]
+            working = [key for key in ids if (a := self._adapters.get(key)) is not None and a.online]
+            if wanted not in working:
+                if not working:
+                    return fallback
+                wanted = working[index % len(working)]
+            return self.client(wanted)
 
         return choose
 
     def mark_failed(self, client: HttpClient) -> None:
-        """A bound client could not connect: probe its adapter again soon."""
+        """A bound client lost its connection: check its adapter again now."""
         for key, value in self._clients.items():
             if value is client and key in self._adapters:
                 self._adapters[key].checked_at = 0.0
+        if self._refresher is None or self._refresher.done():
+            with contextlib.suppress(RuntimeError):
+                self._refresher = asyncio.get_running_loop().create_task(
+                    self._recheck(), name="fetch-netpaths-recheck"
+                )
+
+    async def _recheck(self) -> None:
+        before = {a.id: a.online for a in self._adapters.values()}
+        await self.refresh()
+        if before != {a.id: a.online for a in self._adapters.values()}:
+            self._bus.publish("network.changed", {}, audience="all")
 
     # -- speeds ------------------------------------------------------------------
 
