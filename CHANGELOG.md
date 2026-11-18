@@ -20,6 +20,9 @@
   to add them. **Add download** now finds the links in any pasted text, and
   each link can be unticked before adding. Turn clipboard watching off under
   **Settings > General**.
+- **Auto-extract.** Finished .zip, .7z, .rar and .tar downloads, including
+  multi-part sets, are unpacked into a folder next to them (7-Zip needed for
+  .7z and .rar). Optionally delete the archive afterwards.
 - **Download schedule.** Only download during chosen hours and days, for
   example overnight. Outside them the queue waits and running downloads
   pause and continue later. **Settings > Downloads > Only download at

@@ -43,6 +43,7 @@ from .aria2 import Aria2Service
 from .http import HttpClient
 from .limiter import RateLimiter
 from .schedule import from_settings
+from ..extract import ExtractError, archive_set, extract, parts_present
 from .transfer import Transfer
 
 log = logging.getLogger("fetch.manager")
@@ -137,6 +138,8 @@ class DownloadManager:
         self._timer: asyncio.TimerHandle | None = None
         self._stopping = False
         self._background: set[asyncio.Task] = set()
+        # Archives being (or already) extracted in this run, by first part.
+        self._extracted: set[str] = set()
         self.started_at: float | None = None
         registry.bind_runtime(self)
 
@@ -551,6 +554,65 @@ class DownloadManager:
             self.activity.record, "download", "download.completed",
             f"Downloaded {final.name}", user_id=user_id, target=str(job_id),
             detail={"provider": provider.id, "bytes": size, "engine": transfer.engine},
+        )
+        if settings.downloads.auto_extract:
+            self._spawn(self._auto_extract(final, scope, user_id, job["folder"]))
+
+    # ---------------------------------------------------------------- extracting
+
+    async def _auto_extract(self, final: Path, scope: str, user_id: int, folder: str) -> None:
+        """Unpack a finished archive once every part of its set is here."""
+        archive = archive_set(final)
+        if archive is None:
+            return
+        key = str(archive.head)
+        if key in self._extracted:
+            return
+
+        def unfinished(session: Session) -> int:
+            rows = (
+                session.query(Download.filename, Download.state)
+                .filter(Download.user_id == user_id, Download.destination == scope,
+                        Download.folder == folder, Download.state != S.COMPLETED.value,
+                        Download.state != S.CANCELLED.value)
+                .all()
+            )
+            return sum(1 for name, _state in rows if name and archive.pattern.match(name))
+
+        if await self._db(unfinished) or not archive.head.is_file():
+            return  # the last part to finish starts the extraction
+        self._extracted.add(key)
+        delete_after = self.settings.get().downloads.delete_after_extract
+        parts = await asyncio.to_thread(parts_present, archive)
+        try:
+            target = await asyncio.to_thread(extract, archive, delete_after=delete_after)
+        except ExtractError as exc:
+            self._extracted.discard(key)
+            await asyncio.to_thread(
+                self.activity.record, "download", "extract.failed",
+                f"Could not extract {archive.head.name}: {exc}", user_id=user_id, level="warning",
+            )
+            return
+        except Exception:
+            self._extracted.discard(key)
+            log.exception("Extracting an archive failed", extra={"archive": archive.head.name})
+            return
+        if delete_after:
+            gone = [self.storage.rel_to_space(scope, user_id, p) for p in parts]
+            space = user_id if scope == "private" else 0
+
+            def forget(session: Session) -> None:
+                session.query(FileRecord).filter(
+                    FileRecord.scope == scope, FileRecord.space == space, FileRecord.rel_path.in_(gone)
+                ).delete(synchronize_session=False)
+
+            await self._db(forget)
+        self.bus.publish("storage.changed", {"scope": scope}, user_id=user_id,
+                         audience="all" if scope == "shared" else "owner")
+        await asyncio.to_thread(
+            self.activity.record, "download", "extract.completed",
+            f"Extracted {archive.head.name} into {target.name}", user_id=user_id,
+            detail={"parts": len(parts), "deleted_archive": delete_after},
         )
 
     # ----------------------------------------------------------------- progress

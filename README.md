@@ -201,6 +201,12 @@ is supported and how it was verified. Details, setup steps and limits are in
   actions. Select a row for details, including the exact error of a failed job.
 - **Queue**: what runs next and in which order. Reorder within a priority or
   change the priority.
+- **Auto-extract**: finished .zip, .7z, .rar and .tar downloads are unpacked
+  into a folder next to them, multi-part sets (`name.part1.rar`, `name.r00`,
+  `name.7z.001`) once the last part is in. .7z and .rar need 7-Zip
+  (`winget install 7zip.7zip`). Paths that would leave the folder are refused
+  and password-protected archives are left alone. Turn it off, or have the
+  archive deleted afterwards, under **Settings > Downloads**.
 - **Schedule**: **Settings > Downloads > Only download at certain times**
   limits downloading to chosen hours and days (for example 01:00 to 07:00
   every night). Outside them the queue waits; running downloads go back to

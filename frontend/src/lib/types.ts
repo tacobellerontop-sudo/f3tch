@@ -261,6 +261,8 @@ export interface AppSettings {
     aria2_connections: number;
     connections_per_download: number;
     media_quality: "best" | "2160" | "1440" | "1080" | "720" | "480" | "audio";
+    auto_extract: boolean;
+    delete_after_extract: boolean;
     schedule_enabled: boolean;
     schedule_start: string;
     schedule_stop: string;

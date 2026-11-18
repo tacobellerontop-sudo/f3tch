@@ -13,7 +13,7 @@ const settings: AppSettings = {
     max_global_concurrent: 3, speed_limit_kbps: 0, retry_count: 3, retry_delay_seconds: 30, default_priority: 1,
     use_aria2: true, aria2_path: "", aria2_min_size_mb: 16, aria2_connections: 8,
     connections_per_download: 8, media_quality: "best",
-    schedule_enabled: false, schedule_start: "01:00", schedule_stop: "07:00", schedule_days: [0, 1, 2, 3, 4, 5, 6],
+    auto_extract: true, delete_after_extract: false, schedule_enabled: false, schedule_start: "01:00", schedule_stop: "07:00", schedule_days: [0, 1, 2, 3, 4, 5, 6],
   },
   storage: { storage_root: "", max_storage_gb: 0, temp_cleanup_hours: 72, auto_delete_days: 0, history_retention_days: 0 },
   network: { port: 0 },

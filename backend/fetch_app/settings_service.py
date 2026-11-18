@@ -57,6 +57,9 @@ class DownloadSettings(_Section):
     connections_per_download: int = Field(8, ge=1, le=32)
     # What YouTube and other media sites are saved as.
     media_quality: Literal["best", "2160", "1440", "1080", "720", "480", "audio"] = "best"
+    # Unpack .zip/.7z/.rar/.tar downloads (and multi-part sets) when complete.
+    auto_extract: bool = True
+    delete_after_extract: bool = False
     # Only download during these hours (this PC's local time). Outside them
     # running downloads go back to the queue and continue when the time comes.
     schedule_enabled: bool = False

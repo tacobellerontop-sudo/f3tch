@@ -291,6 +291,22 @@ function DownloadsTab({ payload }: { payload: SettingsPayload }) {
           </div>
           <div className="space-y-4 border-t border-line pt-4">
             <Switch
+              label="Extract archives automatically"
+              description="Unpacks .zip, .7z, .rar and .tar downloads into a folder next to them once every part of a multi-part set is here. .7z and .rar need 7-Zip (winget install 7zip.7zip). Password-protected archives are left as they are."
+              checked={values.auto_extract}
+              onChange={(value) => set("auto_extract", value)}
+            />
+            {values.auto_extract && (
+              <Switch
+                label="Delete the archive after extracting"
+                description="Removes the .zip, .rar or .7z files (all parts) once their contents were unpacked."
+                checked={values.delete_after_extract}
+                onChange={(value) => set("delete_after_extract", value)}
+              />
+            )}
+          </div>
+          <div className="space-y-4 border-t border-line pt-4">
+            <Switch
               label="Only download at certain times"
               description="Outside these hours the queue waits, and running downloads pause and continue from where they were when the time comes. Uses this PC's clock."
               checked={values.schedule_enabled}
