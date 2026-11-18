@@ -32,19 +32,28 @@ class HttpClient:
     def __init__(self, guard: UrlGuard) -> None:
         self.guard = guard
         self._session: aiohttp.ClientSession | None = None
+        # aiohttp trace hooks, e.g. the byte meter of the network speed view.
+        self.trace_configs: list[aiohttp.TraceConfig] = []
 
     async def start(self) -> None:
         if self._session is None:
-            connector = aiohttp.TCPConnector(
-                resolver=GuardedResolver(self.guard), limit=64, ttl_dns_cache=60
-            )
-            self._session = aiohttp.ClientSession(
-                connector=connector,
-                timeout=aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=90),
-                headers={"User-Agent": USER_AGENT},
-                auto_decompress=False,
-                cookie_jar=aiohttp.DummyCookieJar(),
-            )
+            connector = aiohttp.TCPConnector(**self._connector_options())
+            self._session = aiohttp.ClientSession(connector=connector, **self._session_options())
+
+    def _connector_options(self) -> dict[str, Any]:
+        """Keyword arguments of the TCP connector (subclasses bind it to an adapter)."""
+        return {"resolver": GuardedResolver(self.guard), "limit": 64, "ttl_dns_cache": 60}
+
+    def _session_options(self) -> dict[str, Any]:
+        options: dict[str, Any] = {
+            "timeout": aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=90),
+            "headers": {"User-Agent": USER_AGENT},
+            "auto_decompress": False,
+            "cookie_jar": aiohttp.DummyCookieJar(),
+        }
+        if self.trace_configs:
+            options["trace_configs"] = list(self.trace_configs)
+        return options
 
     async def close(self) -> None:
         if self._session is not None:

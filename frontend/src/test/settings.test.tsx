@@ -14,7 +14,7 @@ const settings: AppSettings = {
     use_aria2: true, aria2_path: "", aria2_min_size_mb: 16, aria2_connections: 4,
   },
   storage: { storage_root: "", max_storage_gb: 0, temp_cleanup_hours: 72, auto_delete_days: 0, history_retention_days: 0 },
-  network: { port: 0 },
+  network: { port: 0, multi_path: false, adapters: [] },
 };
 
 const payload: SettingsPayload = {

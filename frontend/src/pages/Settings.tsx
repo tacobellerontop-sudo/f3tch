@@ -24,6 +24,7 @@ import { api, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, PRIORITIES } from "@/lib/format";
 import { useHealth, useLogs, useSettings, useUpdateStatus } from "@/lib/queries";
+import { useNetwork } from "@/lib/netspeed";
 import { useTheme } from "@/lib/theme";
 import type { AppSettings, SettingsPayload, ThemeChoice } from "@/lib/types";
 
@@ -311,15 +312,59 @@ function AdvancedTab({ payload }: { payload: SettingsPayload }) {
     <SettingsForm
       section="network"
       payload={payload}
-      title="Advanced"
+      title="Network"
       description={<>FETCH runs on this computer only and is not reachable from other devices. The window talks to it at <code className="font-mono text-fg">127.0.0.1:{port}</code>.</>}
     >
       {({ values, set }) => (
-        <div className={grid}>
-          <Num label="Port" hint="Change it only if another program uses the same port. 0 uses the default. Restart required." max={65535} value={values.port} onChange={(value) => set("port", value)} />
-        </div>
+        <>
+          <Switch
+            label="Download over every network connection at once"
+            description="With two Wi-Fi adapters, or Wi-Fi plus Ethernet or a phone, FETCH splits each large download over all of them. Each one needs its own way to the internet."
+            checked={values.multi_path}
+            onChange={(value) => set("multi_path", value)}
+          />
+          {values.multi_path && <AdapterChoice chosen={values.adapters} onChange={(value) => set("adapters", value)} />}
+          <div className={grid}>
+            <Num label="Port" hint="Change it only if another program uses the same port. 0 uses the default. Restart required." max={65535} value={values.port} onChange={(value) => set("port", value)} />
+          </div>
+        </>
       )}
     </SettingsForm>
+  );
+}
+
+function AdapterChoice({ chosen, onChange }: { chosen: string[]; onChange: (value: string[]) => void }) {
+  const network = useNetwork();
+  const adapters = network.data?.adapters ?? [];
+  if (network.isPending) return <p className="text-xs text-subtle">Looking for network connections…</p>;
+  if (adapters.length === 0) return <Notice tone="warning">FETCH found no network connection with an address.</Notice>;
+  const all = chosen.length === 0;
+  const toggle = (id: string, on: boolean) => {
+    const current = all ? adapters.map((adapter) => adapter.id) : chosen;
+    const next = on ? [...new Set([...current, id])] : current.filter((item) => item !== id);
+    onChange(next.length === adapters.length ? [] : next);
+  };
+  return (
+    <fieldset className="rounded-md border border-line p-3">
+      <legend className="px-1 text-xs text-muted">Connections to use</legend>
+      <ul className="space-y-2">
+        {adapters.map((adapter) => (
+          <li key={adapter.id}>
+            <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-fg">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-[rgb(var(--accent))]"
+                checked={all || chosen.includes(adapter.id)}
+                onChange={(event) => toggle(adapter.id, event.target.checked)}
+              />
+              <span className="min-w-0 flex-1 truncate">{adapter.name}</span>
+              <span className="tabular text-2xs text-subtle">{adapter.address}</span>
+              {adapter.online === false && <Badge tone="warning">No internet</Badge>}
+            </label>
+          </li>
+        ))}
+      </ul>
+    </fieldset>
   );
 }
 

@@ -7,6 +7,7 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { speedStore, type SpeedSample } from "./netspeed";
 import { progressStore } from "./progress";
 import type { Download, Page, Progress, ServerEvent } from "./types";
 
@@ -55,6 +56,10 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
     progressStore.set(data as unknown as Progress);
     return;
   }
+  if (type === "network.speeds") {
+    speedStore.push(data as unknown as SpeedSample);
+    return;
+  }
   if (type === "download.removed") {
     const id = data.id as number;
     progressStore.clear(id);
@@ -89,6 +94,10 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
     case "settings.changed":
       invalidate("bootstrap");
       invalidate("settings");
+      invalidate("network");
+      break;
+    case "network.changed":
+      invalidate("network");
       break;
     case "providers.changed":
       invalidate("providers");
