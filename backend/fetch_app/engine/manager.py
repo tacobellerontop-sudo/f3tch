@@ -836,6 +836,14 @@ class DownloadManager:
             self.wake()
             return row
 
+    def run_from_thread(self, coro: Any, timeout: float = 30.0) -> Any:
+        """Run ``coro`` on the manager's loop from another thread and return its result."""
+        loop = self._loop
+        if loop is None or loop.is_closed() or threading.get_ident() == self._loop_thread:
+            coro.close()
+            raise RuntimeError("The download manager is not running.")
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout)
+
     # ----------------------------------------------------------------- controls
 
     async def _stop_active(self, job_id: int, reason: str) -> bool:

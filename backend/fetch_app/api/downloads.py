@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -29,6 +30,7 @@ from ..storage import StorageError, clean_rel_path, sanitize_filename
 from .deps import ApiError, Ctx, CurrentUser, Db, client_ip
 
 router = APIRouter(prefix="/downloads", tags=["downloads"])
+log = logging.getLogger("fetch.api.downloads")
 
 S = DownloadState
 QUEUE_STATES = [S.PENDING.value, S.QUEUED.value, S.WAITING.value, S.PAUSED.value]
@@ -349,11 +351,42 @@ def get_captcha(job_id: int, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
         "has_image": bool(challenge.image),
         "page_url": challenge.page_url,
         "accepts_download_url": challenge.accepts_download_url,
+        # The desktop app can open the provider's page in a window of its own.
+        "in_app": _in_app(ctx, challenge),
         "attempt": challenge.attempt,
         "expires_at": (
             datetime.fromtimestamp(expires, UTC).isoformat().replace("+00:00", "Z") if expires else None
         ),
     }
+
+
+def _in_app(ctx: AppContext, challenge) -> bool:
+    # Only for a challenge that cannot be answered inside FETCH (a widget on the provider's site).
+    return (
+        ctx.open_captcha_window is not None and challenge.kind == "external"
+        and bool(challenge.page_url) and challenge.accepts_download_url
+    )
+
+
+@router.post("/{job_id}/captcha/window")
+def open_captcha_window(job_id: int, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
+    """Open the provider's page in the desktop app, where the user completes the CAPTCHA."""
+    row = _own(db, user, job_id)
+    challenge = _pending_captcha(ctx, row)
+    if not _in_app(ctx, challenge):
+        raise ApiError(
+            409, "no_window",
+            "Only the FETCH app can open the provider's page in a window of its own. "
+            "Open it in your browser instead.",
+        )
+    try:
+        ctx.open_captcha_window(job_id, row.provider, challenge.page_url)
+    except Exception as exc:
+        log.warning("The CAPTCHA window could not be opened", exc_info=True)
+        raise ApiError(
+            500, "no_window", "FETCH could not open the window. Open the page in your browser instead."
+        ) from exc
+    return {"ok": True}
 
 
 @router.get("/{job_id}/captcha/image")

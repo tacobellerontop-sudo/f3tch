@@ -357,7 +357,7 @@ There are no accounts: anyone who can use your Windows account can use FETCH.
 | The window is gone but FETCH still runs | It is in the notification area next to the clock (maybe under the ^ arrow). Click it, or start `FETCH.exe` again |
 | The dashboard says "FETCH only answers to this computer" | Open it as `http://localhost:8787` (or your port). FETCH cannot be reached from other devices |
 | A link is rejected as "unsafe address" | The link points to a private or local address. If that is intended (a NAS on your LAN), add the host to `ssrf_allowlist` in `config\fetch.toml` and restart |
-| A Rapidgator download says "Needs you" | Rapidgator's free download asks for a CAPTCHA. Open the download and choose **Complete CAPTCHA**. FETCH shows it to you and never solves it. See [docs/PROVIDERS.md](docs/PROVIDERS.md#rapidgator) |
+| A Rapidgator download says "Needs you" | Rapidgator's free download asks for a CAPTCHA. Click the download, then **Complete CAPTCHA**. If the CAPTCHA only works on Rapidgator's site, choose **Open the CAPTCHA page** and complete it in the window that opens. FETCH never solves it. See [docs/PROVIDERS.md](docs/PROVIDERS.md#rapidgator) |
 | Rapidgator says "Premium only" | The file is Premium-only or over the free size limit, or the stored account is not Premium |
 | MEGA downloads pause with a countdown | MEGA's transfer quota for your IP address is used up. FETCH continues when MEGA allows it |
 | aria2 shows as "optional, not in use" | Install aria2 or place `aria2c.exe` in `tools\aria2\`, then restart. FETCH works without it |
@@ -384,8 +384,10 @@ There are no accounts: anyone who can use your Windows account can use FETCH.
   files); export them in Google Drive first.
 - Free Rapidgator downloads need you to complete Rapidgator's CAPTCHA, and
   run one at a time without resume. If Rapidgator serves a CAPTCHA widget
-  that only works on its own site, you complete the steps in your browser
-  and paste the download address into FETCH.
+  that only works on its own site, **Open the CAPTCHA page** shows
+  Rapidgator's page in a FETCH window; you complete the steps there and FETCH
+  picks up the download by itself. This has not yet been tried against the
+  live Rapidgator site.
 - Anything else that needs a browser login cannot be downloaded.
 - FETCH is for the computer it runs on. It cannot be opened from a phone or
   another PC, and there are no accounts.

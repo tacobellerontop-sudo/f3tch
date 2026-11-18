@@ -237,7 +237,7 @@ describe("download controls", () => {
       "GET /downloads": page([waiting]),
       "GET /downloads/9/captcha": {
         download_id: 9, provider: "rapidgator", kind: "image", prompt: "Type the characters from Rapidgator's picture.",
-        has_image: true, page_url: "https://rapidgator.net/file/abc", accepts_download_url: true, attempt: 1, expires_at: null,
+        has_image: true, page_url: "https://rapidgator.net/file/abc", accepts_download_url: true, in_app: false, attempt: 1, expires_at: null,
       },
       "POST /downloads/9/captcha": { ...waiting, state: "queued" },
     }));
@@ -250,6 +250,31 @@ describe("download controls", () => {
     await user.click(screen.getByRole("button", { name: "Continue download" }));
     await waitFor(() => expect(server.find("POST", "/downloads/9/captcha")).toHaveLength(1));
     expect(server.find("POST", "/downloads/9/captcha")[0].body).toEqual({ answer: "k7xw2" });
+  });
+
+  it("opens a CAPTCHA that only works on the provider's site in a FETCH window", async () => {
+    const waiting = makeDownload({
+      id: 9, filename: "archive.rar", provider: "rapidgator", state: "waiting", error_code: "captcha_required",
+      wait_reason: "Waiting for you to complete the provider's CAPTCHA.", wait_until: new Date(Date.now() + 300_000).toISOString(),
+    });
+    const { user, server } = renderApp("/downloads", local({
+      "GET /downloads": page([waiting]),
+      "GET /downloads/9/captcha": {
+        download_id: 9, provider: "rapidgator", kind: "external", prompt: "Only works on rapidgator.net.",
+        has_image: false, page_url: "https://rapidgator.net/file/abc", accepts_download_url: true, in_app: true, attempt: 1, expires_at: null,
+      },
+      "POST /downloads/9/captcha/window": { ok: true },
+    }));
+    expect(await screen.findByText("Needs you: click here to complete the CAPTCHA")).toBeInTheDocument();
+    await user.click(await screen.findByText("archive.rar"));
+    await user.click(await screen.findByRole("button", { name: "Complete CAPTCHA" }));
+    await user.click(await screen.findByRole("button", { name: "Open the CAPTCHA page" }));
+    await waitFor(() => expect(server.find("POST", "/downloads/9/captcha/window")).toHaveLength(1));
+    expect(await screen.findByText(/Complete the CAPTCHA in the window that opened/)).toBeInTheDocument();
+    // The browser and the pasted address stay available as a fallback.
+    expect(screen.getByRole("link", { name: /open it in your browser instead/i })).toHaveAttribute("href", "https://rapidgator.net/file/abc");
+    expect(screen.getByLabelText("Or paste the download address (optional)")).toBeInTheDocument();
+    expect(server.find("POST", "/downloads/9/captcha")).toHaveLength(0);
   });
 
   it("reorders the queue by sending the new order of that priority group", async () => {

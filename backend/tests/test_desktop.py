@@ -38,7 +38,7 @@ class FakeWindow:
         self.calls = []
         self.destroyed = threading.Event()
         self.events = type("Events", (), {})()
-        for name in ("initialized", "closing", "loaded"):
+        for name in ("initialized", "closing", "loaded", "closed"):
             setattr(self.events, name, FakeEvent())
 
     def show(self):
@@ -52,7 +52,9 @@ class FakeWindow:
 
     def destroy(self):
         self.calls.append("destroy")
-        self.destroyed.set()
+        if not self.destroyed.is_set():
+            self.destroyed.set()
+            self.events.closed.fire()
 
     def click_close(self):
         """The title bar's X: the window closes unless a handler answers False."""
@@ -65,12 +67,17 @@ class FakeWebview:
         self.settings = {}
         self.renderer = renderer
         self.window = None
+        self.extra_windows = []  # windows made after the dashboard's (CAPTCHA pages)
         self.started = threading.Event()
         self.start_options = {}
 
     def create_window(self, title, url, **options):
-        self.window = FakeWindow(title, url, **options)
-        return self.window
+        window = FakeWindow(title, url, **options)
+        if self.window is None:
+            self.window = window
+        else:
+            self.extra_windows.append(window)
+        return window
 
     def start(self, **options):
         self.start_options = options
@@ -285,6 +292,32 @@ def test_window_closes_when_the_server_stops_itself(launch):
     assert app.finish() == 0
     assert "destroy" in app.webview.window.calls
     assert app.tray.icon.stopped.is_set()
+
+
+def test_a_captcha_page_opens_in_a_window_of_its_own_and_goes_with_fetch(launch, monkeypatch):
+    shells = []
+    original = desktop.DesktopShell.run
+    monkeypatch.setattr(desktop.DesktopShell, "run", lambda self, *a, **k: shells.append(self) or original(self, *a, **k))
+    app = launch().start()
+    ctx = shells[0].backend.ctx
+    assert ctx.open_captcha_window is not None, "the app offers the CAPTCHA window"
+    ctx.open_captcha_window(7, "rapidgator", "https://rapidgator.net/file/abc")
+    [page_window] = app.webview.extra_windows
+    assert page_window.url == "https://rapidgator.net/file/abc"
+    api = page_window.options["js_api"]
+    assert [name for name in dir(api) if not name.startswith("_")] == ["found"], "the page can only offer an address"
+    # Asking again brings the same window forward instead of opening another.
+    ctx.open_captcha_window(7, "rapidgator", "https://rapidgator.net/file/abc")
+    assert len(app.webview.extra_windows) == 1 and "show" in page_window.calls
+    # Closed by the person: a new request opens a new window.
+    page_window.destroy()
+    ctx.open_captcha_window(7, "rapidgator", "https://rapidgator.net/file/abc")
+    second = app.webview.extra_windows[1]
+    # Quitting closes it too, or the window library would never return.
+    app.tray.icon.click("Quit FETCH")
+    assert app.finish() == 0
+    assert "destroy" in second.calls
+    assert ctx.open_captcha_window is None
 
 
 def test_without_webview2_the_dashboard_opens_in_the_browser_with_a_tray_icon(launch):
