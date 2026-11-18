@@ -1,4 +1,4 @@
-import { ArrowDownToLine, CheckCircle2, Clock, Gauge, HardDrive, Plus, XCircle } from "lucide-react";
+import { ArrowDownToLine, CheckCircle2, Clock, Gauge, HardDrive, Plus, Trash2, XCircle } from "lucide-react";
 import { memo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
@@ -65,11 +65,11 @@ const ActiveCard = memo(function ActiveCard({ download }: { download: Download }
 
 const LEVEL_DOT: Record<ActivityItem["level"], string> = { info: "bg-subtle", warning: "bg-warning", error: "bg-danger" };
 
-export function ActivityList({ items }: { items: ActivityItem[] }) {
+export function ActivityList({ items, onDelete, deleting }: { items: ActivityItem[]; onDelete?: (item: ActivityItem) => void; deleting?: number | null }) {
   return (
     <ul className="divide-y divide-line">
       {items.map((item) => (
-        <li key={item.id} className="flex items-start gap-3 px-4 py-2.5">
+        <li key={item.id} className="group flex items-start gap-3 px-4 py-2.5">
           <span className={cn("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full", LEVEL_DOT[item.level])} />
           <div className="min-w-0 flex-1">
             <p className="break-words text-[13px] leading-5 text-fg">{item.message}</p>
@@ -78,6 +78,19 @@ export function ActivityList({ items }: { items: ActivityItem[] }) {
           <time className="tabular shrink-0 pt-0.5 text-2xs text-subtle" dateTime={item.created_at} title={new Date(item.created_at).toLocaleString()}>
             {formatRelative(item.created_at)}
           </time>
+          {onDelete && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="-my-1 shrink-0 opacity-60 hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
+              aria-label={`Delete activity: ${item.message}`}
+              title="Delete"
+              loading={deleting === item.id}
+              onClick={() => onDelete(item)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </li>
       ))}
     </ul>

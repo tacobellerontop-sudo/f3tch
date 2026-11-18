@@ -89,6 +89,7 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
       invalidate("bootstrap");
       break;
     case "activity":
+    case "activity.deleted":
       invalidate("activity");
       break;
     case "settings.changed":

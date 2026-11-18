@@ -69,6 +69,18 @@ def write_settings(body: dict, request: Request, user: CurrentUser, ctx: Ctx, db
 # -- activity --------------------------------------------------------------------
 
 
+def _activity_query(db, category: str, level: str, q: str):
+    query = db.query(ActivityLog)
+    if category:
+        query = query.filter(ActivityLog.category == category)
+    if level:
+        query = query.filter(ActivityLog.level == level)
+    if q.strip():
+        text = q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(func.lower(ActivityLog.message).like(f"%{text}%", escape="\\"))
+    return query
+
+
 @router.get("/activity")
 def activity(
     user: CurrentUser,
@@ -79,14 +91,7 @@ def activity(
     level: str = Query("", max_length=8),
     q: str = Query("", max_length=100),
 ) -> dict:
-    query = db.query(ActivityLog)
-    if category:
-        query = query.filter(ActivityLog.category == category)
-    if level:
-        query = query.filter(ActivityLog.level == level)
-    if q.strip():
-        text = q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        query = query.filter(func.lower(ActivityLog.message).like(f"%{text}%", escape="\\"))
+    query = _activity_query(db, category, level, q)
     total = query.count()
     rows = (
         query.order_by(ActivityLog.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -108,6 +113,33 @@ def activity(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.delete("/activity/{entry_id}")
+def delete_activity_entry(entry_id: int, user: CurrentUser, ctx: Ctx, db: Db) -> dict:
+    entry = db.get(ActivityLog, entry_id)
+    if entry is None:
+        raise ApiError(404, "not_found", "That activity entry no longer exists.")
+    db.delete(entry)
+    db.commit()
+    ctx.bus.publish("activity.deleted", {"ids": [entry_id]}, audience="all")
+    return {"deleted": 1}
+
+
+@router.delete("/activity")
+def clear_activity(
+    user: CurrentUser,
+    ctx: Ctx,
+    db: Db,
+    category: str = Query("", max_length=24),
+    level: str = Query("", max_length=8),
+    q: str = Query("", max_length=100),
+) -> dict:
+    """Delete every entry, or only the ones matching the same filters as the list."""
+    deleted = _activity_query(db, category, level, q).delete(synchronize_session=False)
+    db.commit()
+    ctx.bus.publish("activity.deleted", {"cleared": deleted}, audience="all")
+    return {"deleted": deleted}
 
 
 # -- diagnostics -----------------------------------------------------------------
