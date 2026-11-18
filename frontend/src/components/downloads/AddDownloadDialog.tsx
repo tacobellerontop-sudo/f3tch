@@ -11,11 +11,20 @@ import { ProviderTag } from "./parts";
 
 const MAX_LINKS = 100;
 
+const URL_PATTERN = /https?:\/\/[^\s"'<>`{}|\\^[\]]+/gi;
+const TRAILING = ".,;:!?)]}>'\"";
+
+/** Every distinct http(s) link in any text: a list, a chat message, a web page's HTML. */
 export function parseUrls(text: string): string[] {
   const seen = new Set<string>();
   const urls: string[] = [];
-  for (const piece of text.split(/[\s,]+/)) {
-    const url = piece.trim();
+  for (const match of text.matchAll(URL_PATTERN)) {
+    let url = match[0];
+    while (url && TRAILING.includes(url[url.length - 1])) {
+      // Keep a closing bracket that belongs to the link, as in Foo_(bar).
+      if (url.endsWith(")") && url.split("(").length >= url.split(")").length) break;
+      url = url.slice(0, -1);
+    }
     if (url && !seen.has(url)) {
       seen.add(url);
       urls.push(url);
@@ -28,9 +37,11 @@ interface Props {
   open: boolean;
   onClose: () => void;
   initialFolder?: string;
+  /** Text to start with, such as links copied to the clipboard. */
+  initialText?: string;
 }
 
-export function AddDownloadDialog({ open, onClose, initialFolder = "" }: Props) {
+export function AddDownloadDialog({ open, onClose, initialFolder = "", initialText = "" }: Props) {
   const toast = useToast();
   const defaults = useSettingsDefaults();
   const inspect = useInspect();
@@ -41,6 +52,8 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "" }: Props) 
   const [priority, setPriority] = useState(1);
   const [inspected, setInspected] = useState<Record<string, LinkInfo>>({});
   const [result, setResult] = useState<SubmitResult | null>(null);
+  // Links the user unticked: they stay in the list but are not added.
+  const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const requestId = useRef(0);
 
   const urls = useMemo(() => parseUrls(text), [text]);
@@ -49,7 +62,8 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "" }: Props) 
   // Reset whenever the dialog opens.
   useEffect(() => {
     if (!open) return;
-    setText("");
+    setText(initialText);
+    setSkipped(new Set());
     setInspected({});
     setResult(null);
     setFolder(initialFolder);
@@ -82,14 +96,15 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "" }: Props) 
   }, [urls, inspected, open, tooMany, inspectMutate]);
 
   const rows = urls.map((url) => ({ url, info: inspected[url] }));
-  const supported = rows.filter((row) => row.info?.supported).length;
+  const chosen = (row: { url: string; info?: LinkInfo }) => Boolean(row.info?.supported) && !skipped.has(row.url);
+  const supported = rows.filter(chosen).length;
   const unsupported = rows.filter((row) => row.info && !row.info.supported).length;
   const pending = rows.some((row) => !row.info);
-  const knownSize = rows.reduce((sum, row) => sum + (row.info?.supported ? (row.info.size ?? 0) : 0), 0);
+  const knownSize = rows.reduce((sum, row) => sum + (chosen(row) ? (row.info?.size ?? 0) : 0), 0);
   const canSubmit = urls.length > 0 && !tooMany && !pending && supported > 0 && !submit.isPending;
 
   const onSubmit = () => {
-    const accepted = rows.filter((row) => row.info?.supported).map((row) => row.url);
+    const accepted = rows.filter(chosen).map((row) => row.url);
     submit.mutate(
       { urls: accepted, destination: "private", folder: folder.trim(), priority },
       {
@@ -153,7 +168,7 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "" }: Props) 
         </div>
       ) : (
         <div className="space-y-4">
-          <Field label="Links" hint={`One per line. Up to ${MAX_LINKS} at a time.`} error={tooMany ? `That is ${urls.length} links; the limit is ${MAX_LINKS}.` : null}>
+          <Field label="Links" hint={`Paste links, or any text that contains them (a message, a web page). Up to ${MAX_LINKS} at a time.`} error={tooMany ? `That is ${urls.length} links; the limit is ${MAX_LINKS}.` : text.trim() && urls.length === 0 ? "No http:// or https:// links found in this text." : null}>
             {(props) => (
               <Textarea
                 {...props}
@@ -172,6 +187,21 @@ export function AddDownloadDialog({ open, onClose, initialFolder = "" }: Props) 
             <ul className="max-h-56 divide-y divide-line overflow-y-auto rounded border border-line bg-canvas" aria-label="Link inspection">
               {rows.map(({ url, info }) => (
                 <li key={url} className="flex items-start gap-3 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[rgb(var(--accent))] disabled:opacity-40"
+                    aria-label={`Add ${info?.filename || url}`}
+                    disabled={!info?.supported}
+                    checked={Boolean(info?.supported) && !skipped.has(url)}
+                    onChange={(event) =>
+                      setSkipped((previous) => {
+                        const next = new Set(previous);
+                        if (event.target.checked) next.delete(url);
+                        else next.add(url);
+                        return next;
+                      })
+                    }
+                  />
                   <span className="mt-0.5 shrink-0">
                     {!info ? (
                       <Spinner className="h-3.5 w-3.5" />

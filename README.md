@@ -186,13 +186,31 @@ is supported and how it was verified. Details, setup steps and limits are in
 
 ## Using FETCH
 
-- **Add download**: paste one or many links (one per line). FETCH inspects
-  each link first and shows the file name, size and provider, or the reason a
-  link cannot be added. Choose an optional subfolder and a priority.
+- **Add download**: paste links, or any text that contains them (a chat
+  message, a forum post, a page's HTML): FETCH picks the links out. It
+  inspects each link first and shows the file name, size and provider, or
+  the reason a link cannot be added. Untick the ones you don't want, then
+  choose an optional subfolder and a priority.
+- **Link grabbing**: copy download links anywhere on your PC and FETCH offers
+  to add them (bottom right of its window). It reacts to file-host links,
+  media sites and links that end in a file name such as `.zip` or `.exe`,
+  not to ordinary web pages. FETCH never adds anything on its own. The
+  clipboard is read only on this PC and never stored; turn it off under
+  **Settings > General > Watch the clipboard for links**.
 - **Downloads**: everything you added, with search, filters, sorting and bulk
   actions. Select a row for details, including the exact error of a failed job.
 - **Queue**: what runs next and in which order. Reorder within a priority or
   change the priority.
+- **Auto-extract**: finished .zip, .7z, .rar and .tar downloads are unpacked
+  into a folder next to them, multi-part sets (`name.part1.rar`, `name.r00`,
+  `name.7z.001`) once the last part is in. .7z and .rar need 7-Zip
+  (`winget install 7zip.7zip`). Paths that would leave the folder are refused
+  and password-protected archives are left alone. Turn it off, or have the
+  archive deleted afterwards, under **Settings > Downloads**.
+- **Schedule**: **Settings > Downloads > Only download at certain times**
+  limits downloading to chosen hours and days (for example 01:00 to 07:00
+  every night). Outside them the queue waits; running downloads go back to
+  the queue and continue where they were when the time comes.
 - **Files**: browse finished downloads, show them in File Explorer, save a
   copy elsewhere, or delete them.
 - **Providers**, **Activity**, **Settings**: capabilities and credentials,
