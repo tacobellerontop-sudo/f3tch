@@ -245,6 +245,7 @@ export interface AppSettings {
     default_destination: "private" | "shared";
     check_for_updates: boolean;
     close_to_tray: boolean;
+    watch_clipboard: boolean;
   };
   downloads: {
     max_global_concurrent: number;

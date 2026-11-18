@@ -37,6 +37,8 @@ class GeneralSettings(_Section):
     check_for_updates: bool = True
     # Closing the window keeps FETCH downloading, with an icon in the notification area.
     close_to_tray: bool = True
+    # Offer to add download links copied anywhere on this computer.
+    watch_clipboard: bool = True
 
 
 class DownloadSettings(_Section):

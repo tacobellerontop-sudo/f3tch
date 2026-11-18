@@ -186,9 +186,17 @@ is supported and how it was verified. Details, setup steps and limits are in
 
 ## Using FETCH
 
-- **Add download**: paste one or many links (one per line). FETCH inspects
-  each link first and shows the file name, size and provider, or the reason a
-  link cannot be added. Choose an optional subfolder and a priority.
+- **Add download**: paste links, or any text that contains them (a chat
+  message, a forum post, a page's HTML): FETCH picks the links out. It
+  inspects each link first and shows the file name, size and provider, or
+  the reason a link cannot be added. Untick the ones you don't want, then
+  choose an optional subfolder and a priority.
+- **Link grabbing**: copy download links anywhere on your PC and FETCH offers
+  to add them (bottom right of its window). It reacts to file-host links,
+  media sites and links that end in a file name such as `.zip` or `.exe`,
+  not to ordinary web pages. FETCH never adds anything on its own. The
+  clipboard is read only on this PC and never stored; turn it off under
+  **Settings > General > Watch the clipboard for links**.
 - **Downloads**: everything you added, with search, filters, sorting and bulk
   actions. Select a row for details, including the exact error of a failed job.
 - **Queue**: what runs next and in which order. Reorder within a priority or

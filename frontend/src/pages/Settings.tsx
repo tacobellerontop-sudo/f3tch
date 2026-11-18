@@ -226,6 +226,12 @@ function GeneralTab({ payload }: { payload: SettingsPayload }) {
               checked={values.close_to_tray}
               onChange={(value) => set("close_to_tray", value)}
             />
+            <Switch
+              label="Watch the clipboard for links"
+              description="When you copy download links anywhere on this PC, FETCH offers to add them. The clipboard is read only on this PC and never stored."
+              checked={values.watch_clipboard}
+              onChange={(value) => set("watch_clipboard", value)}
+            />
           </div>
         </>
       )}

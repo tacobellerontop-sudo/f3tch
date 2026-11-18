@@ -7,7 +7,7 @@ import { type Call, HttpFailure, local, makeAuth, makeProvider, renderApp } from
 
 const settings: AppSettings = {
   general: {
-    app_name: "FETCH", theme: "dark", language: "en", default_destination: "private", check_for_updates: true, close_to_tray: true,
+    app_name: "FETCH", theme: "dark", language: "en", default_destination: "private", check_for_updates: true, close_to_tray: true, watch_clipboard: true,
   },
   downloads: {
     max_global_concurrent: 3, speed_limit_kbps: 0, retry_count: 3, retry_delay_seconds: 30, default_priority: 1,

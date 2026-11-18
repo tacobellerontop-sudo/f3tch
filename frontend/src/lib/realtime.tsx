@@ -10,6 +10,9 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { progressStore } from "./progress";
 import type { Download, Page, Progress, ServerEvent } from "./types";
 
+/** Window event carrying the links FETCH noticed on the clipboard (string[]). */
+export const CLIPBOARD_EVENT = "fetch:clipboard-links";
+
 export type ConnectionStatus = "connecting" | "online" | "reconnecting" | "offline";
 
 const RealtimeContext = createContext<ConnectionStatus>("offline");
@@ -76,6 +79,9 @@ export function applyServerEvent(client: QueryClient, event: ServerEvent, invali
     return;
   }
   switch (type) {
+    case "clipboard.links":
+      window.dispatchEvent(new CustomEvent(CLIPBOARD_EVENT, { detail: data.urls }));
+      return;
     case "queue.changed":
       invalidate("downloads");
       break;
