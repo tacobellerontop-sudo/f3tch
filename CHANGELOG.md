@@ -16,6 +16,17 @@
   audio only under **Settings > Downloads**. Optional cookies for
   age-restricted or members-only videos.
 - **Dropbox, MediaFire and WeTransfer** share links.
+- **Link grabbing.** Copy download links anywhere on your PC and FETCH offers
+  to add them. **Add download** now finds the links in any pasted text, and
+  each link can be unticked before adding. Turn clipboard watching off under
+  **Settings > General**.
+- **Auto-extract.** Finished .zip, .7z, .rar and .tar downloads, including
+  multi-part sets, are unpacked into a folder next to them (7-Zip needed for
+  .7z and .rar). Optionally delete the archive afterwards.
+- **Download schedule.** Only download during chosen hours and days, for
+  example overnight. Outside them the queue waits and running downloads
+  pause and continue later. **Settings > Downloads > Only download at
+  certain times.**
 - Spotify, Apple Music, Tidal and Deezer links are answered with a clear
   explanation: their music is DRM-protected and FETCH does not remove DRM.
 - Delete activity: each entry on the Activity page has a delete button, and
