@@ -16,7 +16,7 @@ const settings: AppSettings = {
     auto_extract: true, delete_after_extract: false, schedule_enabled: false, schedule_start: "01:00", schedule_stop: "07:00", schedule_days: [0, 1, 2, 3, 4, 5, 6],
   },
   storage: { storage_root: "", max_storage_gb: 0, temp_cleanup_hours: 72, auto_delete_days: 0, history_retention_days: 0 },
-  network: { port: 0 },
+  network: { port: 0, multi_path: false, adapters: [] },
 };
 
 const payload: SettingsPayload = {

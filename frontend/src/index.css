@@ -21,6 +21,11 @@
   --warning: 224 172 78;
   --danger: 236 106 115;
   --info: 110 176 240;
+  /* Chart series, in fixed order (validated for colour-vision deficiency). */
+  --series-1: 57 135 229;
+  --series-2: 217 89 38;
+  --series-3: 25 158 112;
+  --series-4: 201 133 0;
 }
 
 [data-theme="light"] {
@@ -40,6 +45,10 @@
   --warning: 176 118 16;
   --danger: 208 59 72;
   --info: 34 113 190;
+  --series-1: 42 120 214;
+  --series-2: 235 104 52;
+  --series-3: 27 175 122;
+  --series-4: 237 161 0;
 }
 
 @layer base {
@@ -95,5 +104,20 @@
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* The flowing "lane" of each network connection on the speed panel. */
+@keyframes fetch-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.net-flow {
+  animation: fetch-flow linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .net-flow {
+    animation: none;
   }
 }

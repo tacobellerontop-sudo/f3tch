@@ -13,6 +13,7 @@ from .engine.aria2 import Aria2Service
 from .engine.guardproxy import GuardProxy
 from .engine.http import HttpClient
 from .engine.manager import DownloadManager
+from .engine.netpaths import NetworkPaths
 from .events import EventBus
 from .providers.registry import ProviderRegistry
 from .security.crypto import SecretBox
@@ -38,6 +39,7 @@ class AppContext:
     aria2: Aria2Service
     manager: DownloadManager
     updates: UpdateService
+    netpaths: NetworkPaths
     #: Link grabbing from the clipboard (see clipboard.py).
     clipboard: Any = None
     started_at: float = field(default_factory=time.time)

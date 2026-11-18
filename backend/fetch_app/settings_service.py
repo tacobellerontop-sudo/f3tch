@@ -97,6 +97,11 @@ class NetworkSettings(_Section):
     # 0 means "use the port from config/fetch.toml". FETCH always listens on
     # this computer only (127.0.0.1); there is no address setting.
     port: int = Field(0, ge=0, le=65535)
+    # Spread each download over every network connection that reaches the
+    # internet (two Wi-Fi adapters, Wi-Fi plus Ethernet or a tethered phone).
+    multi_path: bool = False
+    # Adapter names to use; empty means all of them.
+    adapters: list[str] = Field(default_factory=list, max_length=16)
 
     @field_validator("port")
     @classmethod

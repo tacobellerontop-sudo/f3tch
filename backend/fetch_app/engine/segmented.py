@@ -226,7 +226,7 @@ class SegmentedDownload:
         self.transfer.report(self.downloaded(), self.size)
         workers = [
             asyncio.create_task(
-                self._worker(first if index == 0 else None), name=f"fetch-segment-{index}"
+                self._worker(first if index == 0 else None, index), name=f"fetch-segment-{index}"
             )
             for index in range(self.connections)
         ]
@@ -268,7 +268,7 @@ class SegmentedDownload:
             raise RangeNotHonoured()
         raise _HttpFailure(resp.status, dict(resp.headers))
 
-    async def _worker(self, initial: Segment | None = None) -> None:
+    async def _worker(self, initial: Segment | None = None, index: int = 0) -> None:
         if initial is None:
             await self._ready.wait()
         segment = initial
@@ -281,10 +281,9 @@ class SegmentedDownload:
             failures = 0
             while segment.remaining > 0:
                 try:
-                    client = (
-                        self.client_for(self.segments.index(segment))
-                        if self.client_for else self.transfer.http
-                    )
+                    # Each connection keeps its client (its network adapter), so
+                    # work stealing hands more of the file to the faster adapter.
+                    client = self.client_for(index) if self.client_for else self.transfer.http
                     async with client.request(
                         "GET", self.resolved.url, headers=self._range_headers(segment)
                     ) as resp:

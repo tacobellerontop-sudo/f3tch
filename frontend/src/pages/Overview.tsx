@@ -3,6 +3,7 @@ import { memo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { DownloadActions } from "@/components/downloads/actions";
+import { NetworkPanel } from "@/components/network/NetworkPanel";
 import { DownloadProgress, ProviderTag, StateBadge, useLive, WaitNote } from "@/components/downloads/parts";
 import { useAddDownload } from "@/components/layout/AppShell";
 import { Button, Card, EmptyState, PageHeader, PageLoader, ProgressBar } from "@/components/ui";
@@ -133,6 +134,10 @@ export function OverviewPage() {
           <Stat label="Download speed" value={speed > 0 ? formatSpeed(speed) : "Idle"} icon={<Gauge className="h-4 w-4" />} />
         </div>
       </div>
+
+      <section aria-label="Network" className="mt-6">
+        <NetworkPanel />
+      </section>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <section aria-labelledby="active-heading" className="min-w-0">

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-18
+
 ### Added
 
 - **Multi-connection downloads without aria2.** Files of 2 MB or more are
@@ -16,6 +18,15 @@
   audio only under **Settings > Downloads**. Optional cookies for
   age-restricted or members-only videos.
 - **Dropbox, MediaFire and WeTransfer** share links.
+- **Download over two networks at once.** With two Wi-Fi adapters, or
+  Wi-Fi plus Ethernet or a tethered phone, FETCH binds each part's
+  connection to one adapter and downloads over all of them together. The
+  faster adapter takes more of the file, and parts move to the remaining
+  adapters when one drops. Turn it on from the Overview or **Settings >
+  Network**, and choose which adapters to use.
+- **Live network speed panel** on the Overview: a scrolling chart of the
+  last minute stacked by connection, and a lane per connection with its
+  speed, share and a flow that speeds up with its traffic.
 - **Link grabbing.** Copy download links anywhere on your PC and FETCH offers
   to add them. **Add download** now finds the links in any pasted text, and
   each link can be unticked before adding. Turn clipboard watching off under

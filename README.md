@@ -179,6 +179,21 @@ aria2 remains an option. Servers that do not support ranges, and providers
 that allow one connection only (MEGA, free Rapidgator), use one connection.
 YouTube and other media downloads fetch their fragments in parallel too.
 
+### Two networks at once
+
+If your PC has more than one way online, such as two Wi-Fi adapters (for
+example a USB Wi-Fi stick on a second network or a phone hotspot), or Wi-Fi
+plus Ethernet or a tethered phone, FETCH can download over all of them at
+once. Turn on **Use every connection at once** on the Overview, or under
+**Settings > Network**, where you can also pick which connections to use.
+FETCH checks which adapters really reach the internet, binds each part's
+connection to one adapter, and lets the faster adapter take more of the
+file. If one connection drops, its parts move to the others. The **Network
+speed** panel on the Overview draws the speed of every connection live.
+Each adapter needs its own route to the internet: two adapters on the same
+router share that router's speed. Large files then use FETCH's own engine
+instead of aria2, because aria2 cannot pick an adapter per connection.
+
 Credentials are entered under **Providers**, encrypted at rest, and never
 shown again. Each provider card states exactly what
 is supported and how it was verified. Details, setup steps and limits are in
@@ -387,6 +402,12 @@ There are no accounts: anyone who can use your Windows account can use FETCH.
   by the automated checks (install, start, update, stop, uninstall). The
   winget prompts and the sign-in startup task have not been exercised.
 - Changing the storage location does not move existing files for you.
+- Downloading over two networks at once relies on Windows sending each
+  connection out of the adapter that owns its address. The automated tests
+  prove that each part leaves from its own local address, but it has not
+  been tried on a real PC with two Wi-Fi adapters yet. Virtual adapters (VPN,
+  Hyper-V, VirtualBox, WSL) are left out; a VPN that routes everything may
+  make both adapters use the same route.
 
 ## More documentation
 

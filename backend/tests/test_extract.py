@@ -142,4 +142,8 @@ def test_multi_part_set_is_extracted_after_the_last_part(admin, fileserver, boot
         admin.wait_state(job["id"], "completed", timeout=60)
     assert wait_for(folder(boot, admin) / "film" / "film.bin")
     assert (folder(boot, admin) / "film" / "film.bin").read_bytes() == data
+    # The parts are deleted once the extraction has finished, a moment after film.bin appears.
+    deadline = time.monotonic() + 10
+    while any((folder(boot, admin) / n).exists() for n in names) and time.monotonic() < deadline:
+        time.sleep(0.05)
     assert not any((folder(boot, admin) / n).exists() for n in names), "parts deleted after extracting"

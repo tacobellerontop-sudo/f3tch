@@ -19,6 +19,7 @@ from .activity import ActivityService
 from .api import admin as admin_api
 from .api import downloads as downloads_api
 from .api import files as files_api
+from .api import network as network_api
 from .api import profile as profile_api
 from .api import providers as providers_api
 from .api import ws as ws_api
@@ -30,6 +31,7 @@ from .engine.aria2 import Aria2Service, find_aria2
 from .clipboard import ClipboardWatcher, default_reader
 from .engine.guardproxy import GuardProxy
 from .engine.http import HttpClient
+from .engine.netpaths import NetworkPaths
 from .engine.manager import DownloadManager
 from .events import EventBus
 from .maintenance import run_maintenance
@@ -93,6 +95,8 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
     storage.ensure()
     guard = UrlGuard(boot.ssrf_allowlist)
     http = HttpClient(guard)
+    netpaths = NetworkPaths(guard, bus, settings.get)
+    http.on_bytes = netpaths.default_meter.add
     box = SecretBox(boot.secret_key)
     registry = ProviderRegistry(db, http, box, providers)
     registry.sync()
@@ -105,7 +109,7 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
         aria2.error = ""
     manager = DownloadManager(
         db=db, settings=settings, storage=storage, registry=registry, http=http,
-        bus=bus, activity=activity, aria2=aria2,
+        bus=bus, activity=activity, aria2=aria2, netpaths=netpaths,
     )
     clipboard = ClipboardWatcher(
         bus=bus, registry=registry, settings=settings, reader=default_reader()
@@ -114,7 +118,7 @@ def build_context(boot: BootConfig, providers: list[ProviderAdapter] | None = No
         clipboard=clipboard,
         boot=boot, db=db, settings=settings, bus=bus, activity=activity, storage=storage,
         guard=guard, http=http, box=box, registry=registry, proxy=proxy, aria2=aria2,
-        manager=manager, updates=UpdateService(boot, http),
+        manager=manager, updates=UpdateService(boot, http), netpaths=netpaths,
         control_token=secrets.token_urlsafe(32),
     )
 
@@ -139,6 +143,7 @@ def create_app(boot: BootConfig | None = None, providers: list[ProviderAdapter] 
         await ctx.proxy.start()
         if ctx.aria2.executable:
             await ctx.aria2.start()
+        await ctx.netpaths.start()
         await ctx.manager.start()
         ctx.clipboard.start()
         housekeeping = asyncio.create_task(_maintenance_loop(ctx), name="fetch-maintenance")
@@ -152,6 +157,7 @@ def create_app(boot: BootConfig | None = None, providers: list[ProviderAdapter] 
                 await housekeeping
             await ctx.clipboard.stop()
             await ctx.manager.stop()
+            await ctx.netpaths.stop()
             await ctx.aria2.stop()
             await ctx.proxy.stop()
             await ctx.http.close()
@@ -213,7 +219,7 @@ def create_app(boot: BootConfig | None = None, providers: list[ProviderAdapter] 
                   exc_info=(type(exc), exc, exc.__traceback__))
         return error(500, "internal_error", "Something went wrong on the server.")
 
-    for module in (profile_api, downloads_api, files_api, providers_api, admin_api, ws_api):
+    for module in (profile_api, downloads_api, files_api, providers_api, admin_api, network_api, ws_api):
         app.include_router(module.router, prefix="/api")
 
     @app.get("/api/health", include_in_schema=False)

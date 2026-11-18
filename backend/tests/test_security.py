@@ -304,7 +304,7 @@ def test_old_databases_with_accounts_carry_over(tmp_path, fileserver):
         assert [i["name"] for i in api.get("/files").json()["items"]] == ["a.bin"]
         data = api.get("/settings").json()
         assert data["settings"]["downloads"]["max_global_concurrent"] == 5
-        assert data["settings"]["network"] == {"port": 9191}
+        assert data["settings"]["network"]["port"] == 9191
         assert data["effective"]["bind_address"] == "127.0.0.1"
         assert set(data["settings"]) == {"general", "downloads", "storage", "network"}
     db = sqlite3.connect(boot.database_path)

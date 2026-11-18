@@ -279,6 +279,8 @@ export interface AppSettings {
   };
   network: {
     port: number;
+    multi_path: boolean;
+    adapters: string[];
   };
 }
 
